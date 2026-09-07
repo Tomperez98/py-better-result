@@ -1,0 +1,10 @@
+{
+  "_tag": "ResultDeserializationError",
+  "name": "ResultDeserializationError",
+  "message": "Failed to deserialize value as Result: expected { status: \"ok\", value } or { status: \"error\", error }",
+  "value": {
+    "status": "unknown",
+    "value": "42"
+  },
+  "issues": null
+}

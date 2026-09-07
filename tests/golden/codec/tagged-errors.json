@@ -1,0 +1,43 @@
+{
+  "user-not-found": {
+    "status": "error",
+    "error": {
+      "_tag": "UserNotFound",
+      "name": "UserNotFound",
+      "message": "User user-42 was not found",
+      "cause": null,
+      "stack": "<trace>",
+      "user_id": "user-42"
+    }
+  },
+  "validation-rejected": {
+    "status": "error",
+    "error": {
+      "_tag": "ValidationRejected",
+      "name": "ValidationRejected",
+      "message": "Validation failed for email",
+      "cause": null,
+      "stack": "<trace>",
+      "field": "email",
+      "issues": [
+        "required",
+        "must contain @"
+      ]
+    }
+  },
+  "service-unavailable": {
+    "status": "error",
+    "error": {
+      "_tag": "ServiceUnavailable",
+      "name": "ServiceUnavailable",
+      "message": "Service billing is unavailable",
+      "cause": {
+        "name": "TimeoutError",
+        "message": "upstream timed out",
+        "stack": "<trace>"
+      },
+      "stack": "<trace>",
+      "service": "billing"
+    }
+  }
+}

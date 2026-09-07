@@ -1,0 +1,9 @@
+{
+  "_tag": "Panic",
+  "cause": {
+    "message": "root cause",
+    "name": "ValueError"
+  },
+  "message": "invalid state",
+  "name": "Panic"
+}

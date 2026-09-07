@@ -1,0 +1,11 @@
+{
+  "_tag": "ResultSerializationError",
+  "name": "ResultSerializationError",
+  "message": "Failed to serialize Result payload",
+  "value": -1,
+  "issues": [
+    {
+      "message": "number must be non-negative"
+    }
+  ]
+}

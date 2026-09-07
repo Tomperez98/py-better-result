@@ -1,0 +1,19 @@
+{
+  "user": {
+    "id": "user-42",
+    "roles": [
+      "admin",
+      "billing"
+    ]
+  },
+  "limits": {
+    "daily": 1000,
+    "features": {
+      "export": true
+    }
+  },
+  "labels": [
+    "gold",
+    "trial"
+  ]
+}

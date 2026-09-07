@@ -1,0 +1,11 @@
+{
+  "_tag": "ResultDeserializationError",
+  "name": "ResultDeserializationError",
+  "message": "Failed to deserialize Result payload",
+  "value": "nope",
+  "issues": [
+    {
+      "message": "expected digits"
+    }
+  ]
+}

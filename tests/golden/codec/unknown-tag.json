@@ -1,0 +1,9 @@
+{
+  "status": "error",
+  "error": {
+    "_tag": "FutureError",
+    "name": "FutureError",
+    "message": "new protocol error",
+    "stack": "received trace"
+  }
+}

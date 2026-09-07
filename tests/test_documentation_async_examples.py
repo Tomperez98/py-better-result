@@ -79,7 +79,8 @@ async def parse_json(text: str) -> Result[object, ParseError]:
 
 
 async def fetch_response(
-    response: Response | BaseException, url: str
+    response: Response | BaseException,
+    url: str,
 ) -> Result[Response, NetworkError]:
     async def operation(_context: TryAsyncContext) -> Response:
         if isinstance(response, BaseException):
@@ -105,7 +106,7 @@ async def get_user_profile(
             ok(selected)
             if selected.ok
             else Err[Response, HttpResponseError](
-                HttpResponseError(selected.status, selected.url)
+                HttpResponseError(selected.status, selected.url),
             )
         ),
     )
@@ -117,7 +118,7 @@ async def get_user_profile(
         return Err[dict[str, object], TaggedError](parsed.error)
     if not isinstance(parsed.value, dict):
         return Err[dict[str, object], TaggedError](
-            ParseError(TypeError("object expected"))
+            ParseError(TypeError("object expected")),
         )
     return Ok[dict[str, object], TaggedError](parsed.value)
 
@@ -125,20 +126,20 @@ async def get_user_profile(
 @pytest.mark.asyncio
 async def test_async_workflow_uses_await_and_explicit_short_circuiting() -> None:
     success = await get_user_profile(
-        Response(200, "https://example.test/user/1", '{"id": 1, "name": "Alice"}')
+        Response(200, "https://example.test/user/1", '{"id": 1, "name": "Alice"}'),
     )
     assert isinstance(success, Ok)
     assert success.value["name"] == "Alice"
 
     http_failure = await get_user_profile(
-        Response(503, "https://example.test/user/1", "unreachable")
+        Response(503, "https://example.test/user/1", "unreachable"),
     )
     assert isinstance(http_failure, Err)
     assert isinstance(http_failure.error, HttpResponseError)
     assert http_failure.error.status == 503
 
     parse_failure = await get_user_profile(
-        Response(200, "https://example.test/user/1", "not json")
+        Response(200, "https://example.test/user/1", "not json"),
     )
     assert isinstance(parse_failure, Err)
     assert isinstance(parse_failure.error, ParseError)

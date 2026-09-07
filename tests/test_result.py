@@ -62,7 +62,8 @@ def test_try_result_uses_catch_handler_and_panics_if_catch_fails() -> None:
 
     with pytest.raises(Panic, match="catch handler threw"):
         try_result(
-            lambda _context: (_ for _ in ()).throw(ValueError("bad")), broken_catch
+            lambda _context: (_ for _ in ()).throw(ValueError("bad")),
+            broken_catch,
         )
 
 

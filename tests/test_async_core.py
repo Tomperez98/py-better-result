@@ -32,13 +32,13 @@ async def test_ok_async_combinators_chain_and_return_self() -> None:
     assert seen == [2]
 
     both = await success.tap_both_async(
-        {"ok": lambda value: _completed(seen.append(value)), "err": _completed}
+        {"ok": lambda value: _completed(seen.append(value)), "err": _completed},
     )
     assert both is success
     assert seen == [2, 2]
 
     recovered = await success.try_recover_async(
-        lambda _: _completed(err("must not run"))
+        lambda _: _completed(err("must not run")),
     )
     assert recovered is success
 
@@ -57,19 +57,19 @@ async def test_err_async_combinators_short_circuit_or_recover() -> None:
     assert seen == []
 
     tapped_error = await failure.tap_error_async(
-        lambda value: _completed(seen.append(value))
+        lambda value: _completed(seen.append(value)),
     )
     assert tapped_error is failure
     assert seen == ["missing"]
 
     both = await failure.tap_both_async(
-        {"ok": _completed, "err": lambda value: _completed(seen.append(value))}
+        {"ok": _completed, "err": lambda value: _completed(seen.append(value))},
     )
     assert both is failure
     assert seen == ["missing", "missing"]
 
     recovered = await failure.try_recover_async(
-        lambda value: _completed(ok(len(value)))
+        lambda value: _completed(ok(len(value))),
     )
     assert isinstance(recovered, Ok)
     assert recovered.value == 7

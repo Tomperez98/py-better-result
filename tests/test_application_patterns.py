@@ -46,14 +46,18 @@ def parse_port(input_value: str) -> Result[int, InvalidPort]:
     return Ok[int, InvalidPort](port)
 
 
-def load_port(input_value: str, *, source_fails: bool = False) -> Result[int, LoadPortError]:
+def load_port(
+    input_value: str,
+    *,
+    source_fails: bool = False,
+) -> Result[int, LoadPortError]:
     """Compose parsing with a second typed failure at the application edge."""
     parsed = parse_port(input_value)
     if isinstance(parsed, Err):
         return Err[int, LoadPortError](parsed.error)
     if source_fails:
         return Err[int, LoadPortError](
-            PortUnavailable(ConnectionError("port source is down"))
+            PortUnavailable(ConnectionError("port source is down")),
         )
     return Ok[int, LoadPortError](parsed.value)
 
@@ -89,7 +93,10 @@ def test_tagged_boundary_errors_are_exhaustively_matchable() -> None:
     }
 
     assert match_error(invalid.error, handlers) == "invalid input: nope"
-    assert match_error(unavailable.error, handlers) == "unavailable: Port source unavailable"
+    assert (
+        match_error(unavailable.error, handlers)
+        == "unavailable: Port source unavailable"
+    )
 
 
 def test_tagged_boundary_errors_preserve_context_when_serialized() -> None:

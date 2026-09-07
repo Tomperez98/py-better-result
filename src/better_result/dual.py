@@ -42,7 +42,9 @@ class Dual3(Protocol[A_contra, B_contra, C_contra, R_co]):
 
     @overload
     def __call__(
-        self, second: B_contra, third: C_contra
+        self,
+        second: B_contra,
+        third: C_contra,
     ) -> Callable[[A_contra], R_co]: ...
 
 
@@ -51,22 +53,32 @@ class Dual4(Protocol[A_contra, B_contra, C_contra, D_contra, R_co]):
 
     @overload
     def __call__(
-        self, first: A_contra, second: B_contra, third: C_contra, fourth: D_contra
+        self,
+        first: A_contra,
+        second: B_contra,
+        third: C_contra,
+        fourth: D_contra,
     ) -> R_co: ...
 
     @overload
     def __call__(
-        self, second: B_contra, third: C_contra, fourth: D_contra
+        self,
+        second: B_contra,
+        third: C_contra,
+        fourth: D_contra,
     ) -> Callable[[A_contra], R_co]: ...
 
     @overload
     def __call__(
-        self, third: C_contra, fourth: D_contra
+        self,
+        third: C_contra,
+        fourth: D_contra,
     ) -> Callable[[A_contra, B_contra], R_co]: ...
 
     @overload
     def __call__(
-        self, fourth: D_contra
+        self,
+        fourth: D_contra,
     ) -> Callable[[A_contra, B_contra, C_contra], R_co]: ...
 
 
@@ -80,13 +92,15 @@ def dual[A, B, R](arity: Literal[2], body: Callable[[A, B], R]) -> Dual2[A, B, R
 
 @overload
 def dual[A, B, C, R](
-    arity: Literal[3], body: Callable[[A, B, C], R]
+    arity: Literal[3],
+    body: Callable[[A, B, C], R],
 ) -> Dual3[A, B, C, R]: ...
 
 
 @overload
 def dual[A, B, C, D, R](
-    arity: Literal[4], body: Callable[[A, B, C, D], R]
+    arity: Literal[4],
+    body: Callable[[A, B, C, D], R],
 ) -> Dual4[A, B, C, D, R]: ...
 
 

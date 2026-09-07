@@ -47,7 +47,9 @@ class InvalidJson(TaggedError, tag="InvalidJson"):
 
     def __init__(self, input_value: str, cause: BaseException) -> None:
         super().__init__(
-            message="Input is not valid JSON", input=input_value, cause=cause
+            message="Input is not valid JSON",
+            input=input_value,
+            cause=cause,
         )
 
 
@@ -103,9 +105,9 @@ def read_server_address(
     return read_env(environment, "HOST").and_then(
         lambda host: read_env(environment, "PORT").and_then(
             lambda port_text: parse_port(port_text).map(
-                lambda port: f"http://{host}:{port}"
-            )
-        )
+                lambda port: f"http://{host}:{port}",
+            ),
+        ),
     )
 
 
@@ -137,9 +139,9 @@ def test_quickstart_result_and_tagged_error_matching() -> None:
                 {
                     "MissingEnv": lambda missing: len(missing.env_name),
                     "InvalidPort": lambda invalid: len(invalid.input),
-                }
+                },
             ),
-        }
+        },
     )
 
     assert exit_code == 3
@@ -263,13 +265,13 @@ def test_collections_and_flatten_examples() -> None:
     assert collected.value == [1, 2, 3]
 
     first_error = all_results(
-        [Ok[int, str](1), Err[int, str]("failed"), Ok[int, str](3)]
+        [Ok[int, str](1), Err[int, str]("failed"), Ok[int, str](3)],
     )
     assert isinstance(first_error, Err)
     assert first_error.error == "failed"
 
     values, errors = partition(
-        [Ok[int, str](1), Err[int, str]("a"), Ok[int, str](2), Err[int, str]("b")]
+        [Ok[int, str](1), Err[int, str]("a"), Ok[int, str](2), Err[int, str]("b")],
     )
     assert values == [1, 2]
     assert errors == ["a", "b"]
@@ -294,16 +296,18 @@ def test_matching_errors_supports_exhaustive_and_partial_forms() -> None:
         {
             "NotFound": lambda selected: f"No user {selected.item_id}",
             "DatabaseUnavailable": lambda _selected: "Try again",
-        }
+        },
     )
     assert to_message(error) == "No user user-123"
 
     partial = match_error_partial(
-        error, {"NotFound": lambda selected: selected.item_id}
+        error,
+        {"NotFound": lambda selected: selected.item_id},
     )
     assert partial == "user-123"
     untouched = match_error_partial(
-        DatabaseUnavailable(), {"NotFound": lambda selected: selected.item_id}
+        DatabaseUnavailable(),
+        {"NotFound": lambda selected: selected.item_id},
     )
     assert isinstance(untouched, DatabaseUnavailable)
 

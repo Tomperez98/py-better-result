@@ -43,9 +43,7 @@ async def test_static_retry_backoff_policies_schedule_expected_delays(
     expected_delays: list[float],
 ) -> None:
     delays: list[float] = []
-    retry_backoff = cast(
-        "Literal['constant', 'linear', 'exponential']", backoff
-    )
+    retry_backoff = cast("Literal['constant', 'linear', 'exponential']", backoff)
 
     async def fake_sleep(seconds: float) -> None:
         delays.append(seconds)
@@ -67,7 +65,9 @@ async def test_static_retry_backoff_policies_schedule_expected_delays(
 
 
 @pytest.mark.asyncio
-async def test_retry_callbacks_receive_failed_attempt_context_and_control_retries() -> None:
+async def test_retry_callbacks_receive_failed_attempt_context_and_control_retries() -> (
+    None
+):
     attempts: list[int] = []
     retry_attempts: list[int] = []
     delay_attempts: list[int] = []
@@ -160,11 +160,16 @@ def test_observers_use_static_forms_and_preserve_the_original_result() -> None:
 
 def test_each_observer_defect_is_a_panic() -> None:
     with pytest.raises(Panic, match="tap_error callback threw"):
-        err("missing").tap_error(lambda _error: (_ for _ in ()).throw(RuntimeError("log failed")))
+        err("missing").tap_error(
+            lambda _error: (_ for _ in ()).throw(RuntimeError("log failed")),
+        )
 
     with pytest.raises(Panic, match="tap_both err callback threw"):
         err("missing").tap_both(
-            {"ok": lambda _value: None, "err": lambda _error: (_ for _ in ()).throw(RuntimeError("log failed"))}
+            {
+                "ok": lambda _value: None,
+                "err": lambda _error: (_ for _ in ()).throw(RuntimeError("log failed")),
+            },
         )
 
 
@@ -183,9 +188,7 @@ async def test_async_observers_use_data_last_forms_and_preserve_identity() -> No
     observed_error = tap_error_async(observe_error)
     assert await observed_error(failure) is failure
 
-    observed_both = tap_both_async(
-        {"ok": observe_value, "err": observe_error}
-    )
+    observed_both = tap_both_async({"ok": observe_value, "err": observe_error})
     assert await observed_both(success) is success
     assert seen == ["missing", 7]
 
@@ -193,13 +196,13 @@ async def test_async_observers_use_data_last_forms_and_preserve_identity() -> No
         raise RuntimeError("async log failed")
 
     with pytest.raises(Panic, match="tap_both_async err callback threw"):
-        await tap_both_async(
-            {"ok": observe_value, "err": broken_error}
-        )(failure)
+        await tap_both_async({"ok": observe_value, "err": broken_error})(failure)
 
 
 @pytest.mark.asyncio
-async def test_all_async_and_partition_async_preserve_order_and_panic_on_rejection() -> None:
+async def test_all_async_and_partition_async_preserve_order_and_panic_on_rejection() -> (
+    None
+):
     async def load(value: int) -> Result[int, str]:
         await asyncio.sleep(0)
         return Ok[int, str](value)

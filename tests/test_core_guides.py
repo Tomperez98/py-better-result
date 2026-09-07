@@ -113,7 +113,10 @@ def test_map_nests_results_but_and_then_flattens_them() -> None:
         called = True
         return Ok[str, ValidationFailed]("unexpected")
 
-    short_circuited = and_then(Err[int, ParseFailed](ParseFailed("bad")), should_not_run)
+    short_circuited = and_then(
+        Err[int, ParseFailed](ParseFailed("bad")),
+        should_not_run,
+    )
     assert isinstance(short_circuited, Err)
     assert isinstance(short_circuited.error, ParseFailed)
     assert not called

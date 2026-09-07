@@ -132,7 +132,9 @@ def test_match_error_partial_preserves_or_transforms_unhandled_errors() -> None:
     assert match_error_partial(unhandled, handlers) is unhandled
     assert (
         match_error_partial(
-            unhandled, handlers, lambda error: f"fallback: {error._tag}"
+            unhandled,
+            handlers,
+            lambda error: f"fallback: {error._tag}",
         )
         == "fallback: ValidationError"
     )
@@ -143,7 +145,8 @@ def test_match_error_partial_preserves_or_transforms_unhandled_errors() -> None:
     assert matcher(unhandled) is unhandled
 
     matcher_with_fallback = match_error_partial(
-        handlers, lambda error: f"fallback: {error._tag}"
+        handlers,
+        lambda error: f"fallback: {error._tag}",
     )
     assert_type(matcher_with_fallback, Callable[[TaggedError], str])
     assert matcher_with_fallback(unhandled) == "fallback: ValidationError"
@@ -160,7 +163,8 @@ def test_partial_match_callback_defects_are_panics() -> None:
 def test_match_error_partial_can_wrap_unhandled_errors_as_err() -> None:
     error = ValidationError("email")
     matcher = match_error_partial(
-        {"NotFoundError": lambda selected: str(selected.item_id)}, err
+        {"NotFoundError": lambda selected: str(selected.item_id)},
+        err,
     )
 
     result = matcher(error)

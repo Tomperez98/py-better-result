@@ -106,7 +106,8 @@ def test_try_recover_short_circuits_or_recovers() -> None:
 
     assert_ok(err("missing").try_recover(lambda error: ok(len(error))), 7)
     assert_err(
-        err("invalid").try_recover(lambda _: err("still invalid")), "still invalid"
+        err("invalid").try_recover(lambda _: err("still invalid")),
+        "still invalid",
     )
 
 

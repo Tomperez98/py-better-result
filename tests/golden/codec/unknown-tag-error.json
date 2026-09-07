@@ -1,0 +1,16 @@
+{
+  "_tag": "ResultDeserializationError",
+  "name": "ResultDeserializationError",
+  "message": "Failed to deserialize Result payload",
+  "value": {
+    "_tag": "FutureError",
+    "name": "FutureError",
+    "message": "new protocol error",
+    "stack": "received trace"
+  },
+  "issues": [
+    {
+      "message": "unsupported error tag"
+    }
+  ]
+}

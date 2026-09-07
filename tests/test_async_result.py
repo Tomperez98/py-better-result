@@ -98,7 +98,8 @@ async def test_async_combinators_support_data_first_and_data_last_forms() -> Non
     assert chained_later.value == "2"
 
     recovered = await try_recover_async(
-        failure, lambda value: _completed(ok(len(value)))
+        failure,
+        lambda value: _completed(ok(len(value))),
     )
     assert isinstance(recovered, Ok)
     assert recovered.value == 3
@@ -107,7 +108,8 @@ async def test_async_combinators_support_data_first_and_data_last_forms() -> Non
     tapped = await tap_async(success, lambda value: _completed(seen.append(value)))
     assert tapped is success
     tapped_error = await tap_error_async(
-        failure, lambda value: _completed(seen.append(value))
+        failure,
+        lambda value: _completed(seen.append(value)),
     )
     assert tapped_error is failure
     both = await tap_both_async(

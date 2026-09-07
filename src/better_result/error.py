@@ -82,8 +82,10 @@ class TaggedError(Exception):
         if isinstance(cause_value, BaseException):
             cause_stack = "".join(
                 traceback.format_exception(
-                    type(cause_value), cause_value, cause_value.__traceback__
-                )
+                    type(cause_value),
+                    cause_value,
+                    cause_value.__traceback__,
+                ),
             ).replace("\n", "\n  ")
             self.stack = f"{self.stack}\nCaused by: {cause_stack}"
 
@@ -113,7 +115,8 @@ class TaggedError(Exception):
         return self.to_dict()
 
     def match(
-        self, handlers: Mapping[str, Callable[[Any], HandlerResult]]
+        self,
+        handlers: Mapping[str, Callable[[Any], HandlerResult]],
     ) -> HandlerResult:
         """Exhaustively dispatch to the handler for this error's tag."""
         return match_error(self, handlers)
@@ -146,7 +149,7 @@ def _serialize_cause(cause: object | None) -> object | None:
             "name": type(cause).__name__,
             "message": str(cause),
             "stack": "".join(
-                traceback.format_exception(type(cause), cause, cause.__traceback__)
+                traceback.format_exception(type(cause), cause, cause.__traceback__),
             ),
         }
     return cause
@@ -160,7 +163,8 @@ def _tag_of(error: object) -> str:
 
 
 def _match_error[HandlerResult](
-    error: object, handlers: Mapping[str, Callable[[Any], HandlerResult]]
+    error: object,
+    handlers: Mapping[str, Callable[[Any], HandlerResult]],
 ) -> HandlerResult:
     try:
         handler = handlers[_tag_of(error)]
@@ -323,7 +327,9 @@ class ResultSerializationError(TaggedError, tag="ResultSerializationError"):
         issues: Sequence[ResultCodecIssue] | None = None,
     ) -> None:
         super().__init__(
-            message="Failed to serialize Result payload", value=value, issues=issues
+            message="Failed to serialize Result payload",
+            value=value,
+            issues=issues,
         )
 
 

@@ -126,7 +126,8 @@ def try_result[A, E](
                 return Err[A, E | UnhandledException](catch(cause))
             except BaseException as catch_error:
                 raise Panic(
-                    "Result.try catch handler threw", catch_error
+                    "Result.try catch handler threw",
+                    catch_error,
                 ) from catch_error
 
     result: Result[A, E | UnhandledException] = execute(TryContext(attempt=1))
@@ -181,7 +182,7 @@ def _jitter_factor(*, jitter: bool | float) -> float:
         return 0.0
     if not math.isfinite(jitter) or not 0 <= jitter <= 1:
         raise Panic(
-            "Result.try_async retry jitter must be a finite number between 0 and 1"
+            "Result.try_async retry jitter must be a finite number between 0 and 1",
         )
     return jitter
 
@@ -228,7 +229,8 @@ async def try_async[A, E](  # noqa: C901
                 raise
             except BaseException as catch_error:
                 raise Panic(
-                    "Result.try_async catch handler threw", catch_error
+                    "Result.try_async catch handler threw",
+                    catch_error,
                 ) from catch_error
 
     context = TryAsyncContext(attempt=1, cancel_event=policy.cancel_event)
@@ -242,7 +244,8 @@ async def try_async[A, E](  # noqa: C901
             break
         error = cast("E", result.error)
         retry_predicate = cast(
-            "Callable[[E, TryAsyncContext], bool | Awaitable[bool]]", should_retry
+            "Callable[[E, TryAsyncContext], bool | Awaitable[bool]]",
+            should_retry,
         )
         try:
             continue_retry = await _await_value(retry_predicate(error, context))
@@ -250,24 +253,29 @@ async def try_async[A, E](  # noqa: C901
             raise
         except BaseException as cause:
             raise Panic(
-                "Result.try_async should_retry predicate threw", cause
+                "Result.try_async should_retry predicate threw",
+                cause,
             ) from cause
         if not continue_retry:
             break
 
         if callable(policy.delay_ms):
             delay_callback = cast(
-                "Callable[[E, TryAsyncContext], float]", policy.delay_ms
+                "Callable[[E, TryAsyncContext], float]",
+                policy.delay_ms,
             )
             try:
                 delay_ms = delay_callback(error, context)
             except BaseException as cause:
                 raise Panic(
-                    "Result.try_async delay_ms callback threw", cause
+                    "Result.try_async delay_ms callback threw",
+                    cause,
                 ) from cause
         else:
             delay_ms = _static_retry_delay(
-                policy.delay_ms, policy.backoff, retry_attempt
+                policy.delay_ms,
+                policy.backoff,
+                retry_attempt,
             )
             delay_ms *= 1 - jitter_factor + random.random() * jitter_factor  # noqa: S311
         if not await _sleep_for_retry(float(delay_ms), policy.cancel_event):
@@ -309,7 +317,8 @@ def map[A, B, E](
 
 @overload
 def map_error[A, E, E2](
-    result: Result[A, E], fn: Callable[[E], E2]
+    result: Result[A, E],
+    fn: Callable[[E], E2],
 ) -> Result[A, E2]: ...
 
 
@@ -335,7 +344,8 @@ def map_error[A, E, E2](
 
 @overload
 def try_recover[A, E, B, E2](
-    result: Result[A, E], fn: Callable[[E], Result[B, E2]]
+    result: Result[A, E],
+    fn: Callable[[E], Result[B, E2]],
 ) -> Result[A | B, E2]: ...
 
 
@@ -354,7 +364,8 @@ def try_recover[A, E, B, E2](
         if isinstance(result_or_fn, (Ok, Err)):
             raise TypeError("try_recover data-last form requires a callback")
         return lambda result: cast(
-            "Result[A | B, E2]", result.try_recover(result_or_fn)
+            "Result[A | B, E2]",
+            result.try_recover(result_or_fn),
         )
     if not isinstance(result_or_fn, (Ok, Err)):
         raise TypeError("try_recover data-first form requires a Result")
@@ -363,7 +374,8 @@ def try_recover[A, E, B, E2](
 
 @overload
 def try_recover_async[A, E, B, E2](
-    result: Result[A, E], fn: Callable[[E], Awaitable[Result[B, E2]]]
+    result: Result[A, E],
+    fn: Callable[[E], Awaitable[Result[B, E2]]],
 ) -> Awaitable[Result[A | B, E2]]: ...
 
 
@@ -387,7 +399,8 @@ def try_recover_async[A, E, B, E2](
 
         async def recover_later(result: Result[A, E]) -> Result[A | B, E2]:
             return cast(
-                "Result[A | B, E2]", await result.try_recover_async(result_or_fn)
+                "Result[A | B, E2]",
+                await result.try_recover_async(result_or_fn),
             )
 
         return recover_later
@@ -398,7 +411,8 @@ def try_recover_async[A, E, B, E2](
 
 @overload
 def and_then[A, E, B, E2](
-    result: Result[A, E], fn: Callable[[A], Result[B, E2]]
+    result: Result[A, E],
+    fn: Callable[[A], Result[B, E2]],
 ) -> Result[B, E | E2]: ...
 
 
@@ -424,7 +438,8 @@ def and_then[A, E, B, E2](
 
 @overload
 def and_then_async[A, E, B, E2](
-    result: Result[A, E], fn: Callable[[A], Awaitable[Result[B, E2]]]
+    result: Result[A, E],
+    fn: Callable[[A], Awaitable[Result[B, E2]]],
 ) -> Awaitable[Result[B, E | E2]]: ...
 
 
@@ -457,7 +472,8 @@ def and_then_async[A, E, B, E2](
 
 @overload
 def match[A, E, T](
-    result: Result[A, E], handlers: Mapping[str, Callable[..., T]]
+    result: Result[A, E],
+    handlers: Mapping[str, Callable[..., T]],
 ) -> T: ...
 
 
@@ -505,7 +521,8 @@ def tap[A, E](
 
 @overload
 def tap_async[A, E](
-    result: Result[A, E], fn: Callable[[A], Awaitable[object]]
+    result: Result[A, E],
+    fn: Callable[[A], Awaitable[object]],
 ) -> Awaitable[Result[A, E]]: ...
 
 
@@ -535,7 +552,8 @@ def tap_async[A, E](
 
 @overload
 def tap_error[A, E](
-    result: Result[A, E], fn: Callable[[E], object]
+    result: Result[A, E],
+    fn: Callable[[E], object],
 ) -> Result[A, E]: ...
 
 
@@ -561,7 +579,8 @@ def tap_error[A, E](
 
 @overload
 def tap_error_async[A, E](
-    result: Result[A, E], fn: Callable[[E], Awaitable[object]]
+    result: Result[A, E],
+    fn: Callable[[E], Awaitable[object]],
 ) -> Awaitable[Result[A, E]]: ...
 
 
@@ -591,7 +610,8 @@ def tap_error_async[A, E](
 
 @overload
 def tap_both[A, E](
-    result: Result[A, E], handlers: Mapping[str, Callable[..., object]]
+    result: Result[A, E],
+    handlers: Mapping[str, Callable[..., object]],
 ) -> Result[A, E]: ...
 
 
@@ -617,7 +637,8 @@ def tap_both[A, E](
 
 @overload
 def tap_both_async[A, E](
-    result: Result[A, E], handlers: Mapping[str, Callable[..., Awaitable[object]]]
+    result: Result[A, E],
+    handlers: Mapping[str, Callable[..., Awaitable[object]]],
 ) -> Awaitable[Result[A, E]]: ...
 
 

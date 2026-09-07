@@ -300,6 +300,17 @@ def test_panic_function_always_raises() -> None:
         panic("fatal")
 
 
+def test_panic_is_not_caught_by_a_broad_exception_handler() -> None:
+    def call_with_broad_handler() -> None:
+        try:
+            panic("fatal")
+        except Exception as cause:  # pragma: no cover - contract guard
+            pytest.fail(f"Panic was caught as {cause!r}")
+
+    with pytest.raises(PanicError, match="fatal"):
+        call_with_broad_handler()
+
+
 def test_result_iterators_support_yield_from_and_short_circuiting() -> None:
     success_iterator = iter(Ok(5))
     with pytest.raises(StopIteration) as success_stop:

@@ -35,14 +35,16 @@ T_co = TypeVar("T_co", covariant=True)
 U = TypeVar("U")
 
 
-class PanicError(Exception):
+class PanicError(BaseException):
     """
     An unrecoverable failure raised by a Result operation.
 
-    Callback exceptions are wrapped in ``Panic`` so that programmer errors do
-    not accidentally become ordinary ``Err`` values.  ``cause`` is retained
-    as the original value and, when it is an exception, is also attached to
-    Python's exception chain.
+    ``PanicError`` intentionally derives from ``BaseException`` so a broad
+    ``except Exception`` handler cannot swallow a programmer defect. Callback
+    exceptions are wrapped in ``Panic`` so that programmer errors do not
+    accidentally become ordinary ``Err`` values. ``cause`` is retained as the
+    original value and, when it is an exception, is also attached to Python's
+    exception chain.
     """
 
     _tag: Literal["Panic"] = "Panic"

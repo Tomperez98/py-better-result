@@ -6,15 +6,10 @@ from typing import assert_type
 
 import pytest
 
+from better_result.combinators import and_then, map_error, match, try_recover
 from better_result.core import Err, Ok, Panic, Result, err, is_err, is_error, is_ok, ok
 from better_result.error import TaggedError, UnhandledException
-from better_result.result import (
-    and_then,
-    map_error,
-    match,
-    try_async,
-    try_recover,
-)
+from better_result.retry import try_async
 
 
 class ParseFailed(TaggedError, tag="ParseFailed"):

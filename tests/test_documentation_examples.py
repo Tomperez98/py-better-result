@@ -5,6 +5,19 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, assert_type
 
+from better_result.collections import all_results, flatten, partition
+from better_result.combinators import (
+    and_then,
+    map_error,
+    map_result,
+    match,
+    tap,
+    try_recover,
+    unwrap,
+    unwrap_or,
+)
+from better_result.retry import try_result
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -12,20 +25,6 @@ import pytest
 
 from better_result.core import Err, Ok, Panic, Result, is_err, is_ok
 from better_result.error import TaggedError, match_error, match_error_partial
-from better_result.result import (
-    all as all_results,
-    and_then,
-    flatten,
-    map as map_result,
-    map_error,
-    match,
-    partition,
-    tap,
-    try_recover,
-    try_result,
-    unwrap,
-    unwrap_or,
-)
 
 
 class MissingEnv(TaggedError, tag="MissingEnv"):
@@ -156,7 +155,7 @@ def parse_json_value(input_value: str) -> object:
 
 def parse_json(input_value: str) -> Result[object, InvalidJson]:
     return try_result(
-        lambda _context: parse_json_value(input_value),
+        lambda _: parse_json_value(input_value),
         lambda cause: InvalidJson(input_value, cause),
     )
 

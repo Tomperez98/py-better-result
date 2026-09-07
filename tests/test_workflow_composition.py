@@ -7,9 +7,9 @@ from typing import assert_type
 
 import pytest
 
+from better_result.combinators import and_then_async
 from better_result.core import Err, Ok, Result, err
 from better_result.error import TaggedError
-from better_result.result import and_then_async
 
 
 class InvalidAmount(TaggedError, tag="InvalidAmount"):

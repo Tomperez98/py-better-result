@@ -7,19 +7,16 @@ from typing import Any, Never, cast
 
 import pytest
 
-from better_result.core import Err, Ok, Panic, Result, err, ok
-from better_result.result import (
-    AsyncRetryConfig,
-    TryAsyncContext,
-    all_async,
+from better_result.collections import all_results_async, partition_async
+from better_result.combinators import (
     and_then_async,
-    partition_async,
     tap_async,
     tap_both_async,
     tap_error_async,
-    try_async,
     try_recover_async,
 )
+from better_result.core import Err, Ok, Panic, Result, err, ok
+from better_result.retry import AsyncRetryConfig, TryAsyncContext, try_async
 
 
 @pytest.mark.asyncio
@@ -126,7 +123,7 @@ async def test_all_async_and_partition_async_preserve_input_order() -> None:
         await asyncio.sleep(0)
         return ok(value)
 
-    collected = await all_async([delayed(1), ok(2), delayed(3)])
+    collected = await all_results_async([delayed(1), ok(2), delayed(3)])
     assert isinstance(collected, Ok)
     assert collected.value == [1, 2, 3]
 
@@ -137,7 +134,7 @@ async def test_all_async_and_partition_async_preserve_input_order() -> None:
         raise RuntimeError("network failed")
 
     with pytest.raises(Panic, match="input awaitable rejected"):
-        await all_async([rejected()])
+        await all_results_async([rejected()])
 
 
 @pytest.mark.asyncio
@@ -179,7 +176,7 @@ async def test_all_async_cancels_siblings_when_an_input_rejects() -> None:
         return Ok[int, str](1)
 
     with pytest.raises(Panic, match="input awaitable rejected"):
-        await all_async([rejected(), sibling()])
+        await all_results_async([rejected(), sibling()])
 
     assert cancelled.is_set()
 

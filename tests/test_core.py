@@ -46,6 +46,17 @@ def test_ok_and_err_constructors_expose_status_and_payload() -> None:
     assert ok().value is None
 
 
+def test_results_have_value_equality_and_repr() -> None:
+    assert Ok(42) == Ok(42)
+    assert Ok(42) != Ok(7)
+    assert Err("missing") == Err("missing")
+    assert Err("missing") != Err("other")
+    assert Ok(42) != Err(42)
+    assert Err(42) != Ok(42)
+    assert repr(Ok(42)) == "Ok(42)"
+    assert repr(Err("missing")) == "Err('missing')"
+
+
 def test_guards_narrow_the_result_variants() -> None:
     success = ok(42)
     failure = err("missing")
@@ -224,6 +235,15 @@ def test_panic_serializes_causes_and_has_a_guard() -> None:
     assert cause_data["message"] == "root cause"
     assert Panic("plain").to_json()["cause"] is None
     assert Panic("plain", cause="text").to_dict()["cause"] == "text"
+    assert "stack" in panic_error.to_json()
+    assert "stack" not in panic_error.to_safe_json()
+    assert panic_error.to_safe_json()["message"] == "wrapped"
+
+    nested = Panic(
+        "nested",
+        cause={"stack": "secret", "items": [{"stack": "nested secret"}]},
+    ).to_safe_json()
+    assert nested["cause"] == {"items": [{}]}
     assert panic_error.__cause__ is cause
 
 

@@ -173,6 +173,34 @@ def test_match_error_partial_can_wrap_unhandled_errors_as_err() -> None:
     assert result.error is error
 
 
+def test_match_error_partial_preserves_falsey_fallback_callables() -> None:
+    error = ValidationError("email")
+    calls: list[str] = []
+
+    class FalseyFallback:
+        def __bool__(self) -> bool:
+            return False
+
+        def __call__(self, selected: TaggedError) -> str:
+            calls.append(selected._tag)
+            return "handled"
+
+    result = match_error_partial(error, {}, FalseyFallback())
+
+    assert result == "handled"
+    assert calls == ["ValidationError"]
+
+
+def test_safe_error_serialization_omits_diagnostic_stack() -> None:
+    error = NotFoundError("123")
+
+    assert "stack" in error.to_json()
+    safe = error.to_safe_json()
+    assert "stack" not in safe
+    assert safe["_tag"] == "NotFoundError"
+    assert safe["item_id"] == "123"
+
+
 def test_builtin_tagged_errors_keep_their_values() -> None:
     cause = ValueError("bad input")
     unhandled = UnhandledException(cause)

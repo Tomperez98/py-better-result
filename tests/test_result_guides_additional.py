@@ -7,25 +7,26 @@ from typing import TYPE_CHECKING, Literal, assert_type, cast
 
 import pytest
 
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Iterator
-
-from better_result.core import Err, Ok, Panic, Result, err, ok
-from better_result.result import (
-    AsyncRetryConfig,
-    TryAsyncContext,
-    all as all_results,
-    all_async,
+from better_result.collections import (
+    all_results,
+    all_results_async,
     partition,
     partition_async,
+)
+from better_result.combinators import (
     tap,
     tap_both,
     tap_both_async,
     tap_error,
     tap_error_async,
-    try_async,
     unwrap_or,
 )
+from better_result.retry import AsyncRetryConfig, TryAsyncContext, try_async
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Iterator
+
+from better_result.core import Err, Ok, Panic, Result, err, ok
 
 
 @pytest.mark.asyncio
@@ -207,7 +208,7 @@ async def test_all_async_and_partition_async_preserve_order_and_panic_on_rejecti
         await asyncio.sleep(0)
         return Ok[int, str](value)
 
-    collected = await all_async([load(1), Err[int, str]("bad"), load(3)])
+    collected = await all_results_async([load(1), Err[int, str]("bad"), load(3)])
     assert isinstance(collected, Err)
     assert collected.error == "bad"
 

@@ -6,23 +6,19 @@ from typing import Never, assert_type
 
 import pytest
 
-from better_result.core import Err, Ok, Panic, Result, err, ok
-from better_result.error import UnhandledException
-from better_result.result import (
-    RetryConfig,
-    TryContext,
-    all as all_results,
+from better_result.collections import all_results, flatten, partition
+from better_result.combinators import (
     and_then,
-    flatten,
-    map as map_result,
     map_error,
+    map_result,
     match,
-    partition,
     tap,
     try_recover,
-    try_result,
     unwrap_or,
 )
+from better_result.core import Err, Ok, Panic, Result, err, ok
+from better_result.error import UnhandledException
+from better_result.retry import RetryConfig, TryContext, try_result
 
 
 def test_try_result_returns_success_and_tracks_attempts() -> None:

@@ -1,6 +1,6 @@
 [project]
 name = "better-result"
-version = "0.1.0"
+version = "1.0.0"
 description = "Typed Result values, tagged errors, retries, and codecs for Python"
 readme = "README.md"
 authors = [
@@ -17,6 +17,7 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.1.1,<10",
     "pytest-asyncio>=1.4.0,<2",
+    "pytest-cov>=7.0.0,<8",
     "ruff>=0.16.6,<0.17",
     "ty>=0.0.78,<0.1",
 ]
@@ -28,3 +29,11 @@ all = "error"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+branch = true
+source = ["src/better_result"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100

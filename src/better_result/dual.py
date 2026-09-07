@@ -140,6 +140,3 @@ def dual[R](arity: int, body: Callable[..., R]) -> Callable[..., object]:
         return data_last
 
     return wrapper
-
-
-__all__ = ["Dual1", "Dual2", "Dual3", "Dual4", "dual"]

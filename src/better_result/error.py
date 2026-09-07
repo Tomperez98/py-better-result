@@ -13,7 +13,7 @@ import types
 from collections.abc import Callable, Generator, Mapping, Sequence
 from typing import Any, ClassVar, Never, TypeGuard, TypeVar, cast, overload
 
-from .core import Err, Panic, _json_safe, err, panic
+from .core import Err, Panic, _json_safe, _without_diagnostic_stack, err, panic
 
 TaggedErrorLike = TypeVar("TaggedErrorLike", bound="TaggedError")
 HandlerResult = TypeVar("HandlerResult")
@@ -111,8 +111,18 @@ class TaggedError(Exception):
         }
 
     def to_json(self) -> dict[str, object | None]:
-        """Return a recursively JSON-compatible representation of this error."""
+        """Return a recursively JSON-compatible diagnostic representation."""
         return cast("dict[str, object | None]", _json_safe(self.to_dict()))
+
+    def to_safe_dict(self) -> dict[str, object | None]:
+        """Return error metadata without diagnostic stack traces."""
+        return cast(
+            "dict[str, object | None]", _without_diagnostic_stack(self.to_dict())
+        )
+
+    def to_safe_json(self) -> dict[str, object | None]:
+        """Return a JSON-compatible error payload safe for transport."""
+        return cast("dict[str, object | None]", _json_safe(self.to_safe_dict()))
 
     def match(
         self,
@@ -279,7 +289,9 @@ def match_error_partial[HandlerResult](
     error = error_or_handlers
     if not isinstance(handlers_or_on_unhandled, Mapping):
         raise TypeError("handlers must be a mapping")
-    fallback: Callable[[TaggedError], object] = on_unhandled or _identity
+    fallback: Callable[[TaggedError], object] = (
+        on_unhandled if on_unhandled is not None else _identity
+    )
     return _apply_partial(error, handlers_or_on_unhandled, fallback)
 
 
@@ -341,16 +353,3 @@ def _stringify(value: object) -> str:
     if value is False:
         return "false"
     return str(value)
-
-
-__all__ = [
-    "ResultCodecIssue",
-    "ResultDeserializationError",
-    "ResultSerializationError",
-    "TaggedError",
-    "UnhandledException",
-    "is_tagged_error",
-    "match_error",
-    "match_error_partial",
-    "tagged_error",
-]

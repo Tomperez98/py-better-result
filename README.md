@@ -86,7 +86,7 @@ message = match_error(
 )
 ```
 
-`TaggedError.to_json()` and `Panic.to_json()` return recursively JSON-compatible dictionaries. `to_dict()` retains the raw Python dictionary representation.
+`TaggedError.to_json()` and `Panic.to_json()` return recursively JSON-compatible diagnostic dictionaries, including stack traces. Use `to_safe_json()` for transport payloads when stack traces and other diagnostic details should not leave the process. `to_dict()` and `to_safe_dict()` provide the corresponding Python dictionaries.
 
 ## Async workflows
 
@@ -154,6 +154,9 @@ Synchronous schemas return a `Result` directly. If a schema is asynchronous, use
 
 ```bash
 uv run pytest -q
+uv run pytest --cov
 uv run ruff check src tests
 uv run ty check
 ```
+
+Coverage is opt-in and is enforced at 100% when running `uv run pytest --cov`.

@@ -9,17 +9,11 @@ from typing import Never
 
 import pytest
 
+from better_result.collections import all_results_async, partition_async
+from better_result.combinators import and_then, and_then_async
 from better_result.core import Err, Ok, Panic, Result, err, ok
 from better_result.error import TaggedError
-from better_result.result import (
-    AsyncRetryConfig,
-    TryAsyncContext,
-    all_async,
-    and_then,
-    and_then_async,
-    partition_async,
-    try_async,
-)
+from better_result.retry import AsyncRetryConfig, TryAsyncContext, try_async
 
 
 class NetworkError(TaggedError, tag="NetworkError"):
@@ -225,7 +219,7 @@ async def test_async_collections_collect_and_partition_without_generators() -> N
         await asyncio.sleep(0)
         return ok(value)
 
-    collected = await all_async([load(1), load(2), ok(3)])
+    collected = await all_results_async([load(1), load(2), ok(3)])
     assert isinstance(collected, Ok)
     assert collected.value == [1, 2, 3]
 
@@ -236,4 +230,4 @@ async def test_async_collections_collect_and_partition_without_generators() -> N
         raise RuntimeError("broken promise")
 
     with pytest.raises(Panic, match="input awaitable rejected"):
-        await all_async([rejected()])
+        await all_results_async([rejected()])

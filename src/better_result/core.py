@@ -80,8 +80,18 @@ class Panic(Exception):
         }
 
     def to_json(self) -> dict[str, object | None]:
-        """Return a recursively JSON-compatible panic dictionary."""
+        """Return a recursively JSON-compatible diagnostic dictionary."""
         return cast("dict[str, object | None]", _json_safe(self.to_dict()))
+
+    def to_safe_dict(self) -> dict[str, object | None]:
+        """Return panic metadata without diagnostic stack traces."""
+        return cast(
+            "dict[str, object | None]", _without_diagnostic_stack(self.to_dict())
+        )
+
+    def to_safe_json(self) -> dict[str, object | None]:
+        """Return a JSON-compatible panic payload safe for transport."""
+        return cast("dict[str, object | None]", _json_safe(self.to_safe_dict()))
 
     def __iter__(self) -> Generator[Err[Never, Panic], None, Never]:
         """Yield this panic as an Err, then fail if iteration continues."""
@@ -99,6 +109,19 @@ def _serialize_cause(cause: object | None) -> object | None:
             ),
         }
     return cause
+
+
+def _without_diagnostic_stack(value: object) -> object:
+    """Remove stack fields recursively from a diagnostic payload."""
+    if isinstance(value, Mapping):
+        return {
+            key: _without_diagnostic_stack(item)
+            for key, item in value.items()
+            if key != "stack"
+        }
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_without_diagnostic_stack(item) for item in value]
+    return value
 
 
 def _json_safe(value: object, seen: set[int] | None = None) -> object:
@@ -191,6 +214,7 @@ class Ok[T, E]:
     """Successful immutable Result variant."""
 
     __slots__ = ("value",)
+    __hash__ = None
     status: ClassVar[Literal["ok"]] = "ok"
     value: T
 
@@ -200,6 +224,18 @@ class Ok[T, E]:
     @override
     def __setattr__(self, _name: str, _value: object) -> Never:
         raise AttributeError("Ok is immutable")
+
+    @override
+    def __repr__(self) -> str:
+        """Return a concise representation of the successful result."""
+        return f"Ok({self.value!r})"
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        """Compare successful results by concrete variant and value."""
+        if not isinstance(other, Ok):
+            return False
+        return type(self) is type(other) and self.value == other.value
 
     def is_ok(self) -> bool:
         return True
@@ -371,6 +407,7 @@ class Err[T, E]:
     """Failed immutable Result variant."""
 
     __slots__ = ("error",)
+    __hash__ = None
     status: ClassVar[Literal["error"]] = "error"
     error: E
 
@@ -380,6 +417,18 @@ class Err[T, E]:
     @override
     def __setattr__(self, _name: str, _value: object) -> Never:
         raise AttributeError("Err is immutable")
+
+    @override
+    def __repr__(self) -> str:
+        """Return a concise representation of the failed result."""
+        return f"Err({self.error!r})"
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        """Compare failed results by concrete variant and error."""
+        if not isinstance(other, Err):
+            return False
+        return type(self) is type(other) and self.error == other.error
 
     def is_ok(self) -> bool:
         return False

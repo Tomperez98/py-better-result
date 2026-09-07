@@ -11,9 +11,12 @@ implementation, so mutating a mutable payload remains visible to callers.
 # recommend; the typing aliases below are intentional.
 from __future__ import annotations
 
+import asyncio
 import traceback
+from collections.abc import Mapping
 from typing import (
     TYPE_CHECKING,
+    ClassVar,
     Literal,
     Never,
     TypedDict,
@@ -21,10 +24,11 @@ from typing import (
     TypeVar,
     cast,
     overload,
+    override,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Generator, Mapping
+    from collections.abc import Awaitable, Callable, Generator
 
 A = TypeVar("A")
 B = TypeVar("B")
@@ -66,7 +70,7 @@ class Panic(Exception):
         return isinstance(value, Panic)
 
     def to_dict(self) -> dict[str, object | None]:
-        """Serialize this panic into a JSON-compatible dictionary."""
+        """Return this panic as a Python dictionary."""
         return {
             "_tag": self._tag,
             "name": self.name,
@@ -76,8 +80,8 @@ class Panic(Exception):
         }
 
     def to_json(self) -> dict[str, object | None]:
-        """Alias for :meth:`to_dict` using Python's naming convention."""
-        return self.to_dict()
+        """Return a recursively JSON-compatible panic dictionary."""
+        return cast("dict[str, object | None]", _json_safe(self.to_dict()))
 
     def __iter__(self) -> Generator[Err[Never, Panic], None, Never]:
         """Yield this panic as an Err, then fail if iteration continues."""
@@ -97,6 +101,33 @@ def _serialize_cause(cause: object | None) -> object | None:
     return cause
 
 
+def _json_safe(value: object, seen: set[int] | None = None) -> object:
+    """Convert arbitrary values into JSON-compatible primitives."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, BaseException):
+        return _json_safe(_serialize_cause(value), seen)
+
+    active = seen if seen is not None else set()
+    identity = id(value)
+    if identity in active:
+        return "<cycle>"
+
+    if isinstance(value, Mapping):
+        active.add(identity)
+        try:
+            return {str(key): _json_safe(item, active) for key, item in value.items()}
+        finally:
+            active.remove(identity)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        active.add(identity)
+        try:
+            return [_json_safe(item, active) for item in value]
+        finally:
+            active.remove(identity)
+    return repr(value)
+
+
 def is_panic(value: object) -> TypeGuard[Panic]:
     """Return whether *value* is a Panic."""
     return isinstance(value, Panic)
@@ -111,18 +142,24 @@ C = TypeVar("C")
 
 
 def _try_or_panic[C](fn: Callable[[], C], message: str) -> C:
-    """Execute a callback and wrap every callback failure in Panic."""
+    """Execute a callback and wrap ordinary callback failures in Panic."""
     try:
         return fn()
-    except BaseException as cause:
+    except Panic:
+        raise
+    except Exception as cause:
         raise Panic(message, cause) from cause
 
 
 async def _try_or_panic_async[C](fn: Callable[[], Awaitable[C]], message: str) -> C:
-    """Async version of :func:`_try_or_panic`."""
+    """Async version of :func:`_try_or_panic` that preserves cancellation."""
     try:
         return await fn()
-    except BaseException as cause:
+    except asyncio.CancelledError:
+        raise
+    except Panic:
+        raise
+    except Exception as cause:
         raise Panic(message, cause) from cause
 
 
@@ -151,12 +188,18 @@ class AsyncTapHandlers[T, E](TypedDict):
 
 
 class Ok[T, E]:
-    """Successful result variant."""
+    """Successful immutable Result variant."""
 
-    status: Literal["ok"] = "ok"
+    __slots__ = ("value",)
+    status: ClassVar[Literal["ok"]] = "ok"
+    value: T
 
     def __init__(self, value: T) -> None:
-        self.value = value
+        object.__setattr__(self, "value", value)
+
+    @override
+    def __setattr__(self, _name: str, _value: object) -> Never:
+        raise AttributeError("Ok is immutable")
 
     def is_ok(self) -> bool:
         return True
@@ -193,23 +236,39 @@ class Ok[T, E]:
         return cast("Ok[T, E2]", self)
 
     def and_then(self, fn: Callable[[T], Result[U, E2]]) -> Result[U, E | E2]:
-        """Run a Result-returning callback on success."""
+        """Run and validate a Result-returning callback on success."""
+
+        def callback() -> Result[U, E2]:
+            return cast(
+                "Result[U, E2]",
+                _require_result(
+                    fn(self.value),
+                    "and_then callback must return a Result",
+                ),
+            )
+
         return cast(
-            "Result[U, E | E2]",
-            _try_or_panic(lambda: fn(self.value), "and_then callback threw"),
+            "Result[U, E | E2]", _try_or_panic(callback, "and_then callback threw")
         )
 
     async def and_then_async(
         self,
         fn: Callable[[T], Awaitable[Result[U, E2]]],
     ) -> Result[U, E | E2]:
-        """Async version of :meth:`and_then`."""
+        """Async version of :meth:`and_then` with Result validation."""
+
+        async def callback() -> Result[U, E2]:
+            return cast(
+                "Result[U, E2]",
+                _require_result(
+                    await fn(self.value),
+                    "and_then_async callback must return a Result",
+                ),
+            )
+
         return cast(
             "Result[U, E | E2]",
-            await _try_or_panic_async(
-                lambda: fn(self.value),
-                "and_then_async callback threw",
-            ),
+            await _try_or_panic_async(callback, "and_then_async callback threw"),
         )
 
     @overload
@@ -309,12 +368,18 @@ class Ok[T, E]:
 
 
 class Err[T, E]:
-    """Failed result variant."""
+    """Failed immutable Result variant."""
 
-    status: Literal["error"] = "error"
+    __slots__ = ("error",)
+    status: ClassVar[Literal["error"]] = "error"
+    error: E
 
     def __init__(self, error: E) -> None:
-        self.error = error
+        object.__setattr__(self, "error", error)
+
+    @override
+    def __setattr__(self, _name: str, _value: object) -> Never:
+        raise AttributeError("Err is immutable")
 
     def is_ok(self) -> bool:
         return False
@@ -331,18 +396,35 @@ class Err[T, E]:
         return _try_or_panic(lambda: Err(fn(self.error)), "map_error callback threw")
 
     def try_recover(self, fn: Callable[[E], Result[U, E2]]) -> Result[U, E2]:
-        """Attempt recovery by passing the error to a Result callback."""
-        return _try_or_panic(lambda: fn(self.error), "try_recover callback threw")
+        """Attempt and validate recovery through a Result callback."""
+
+        def callback() -> Result[U, E2]:
+            return cast(
+                "Result[U, E2]",
+                _require_result(
+                    fn(self.error),
+                    "try_recover callback must return a Result",
+                ),
+            )
+
+        return _try_or_panic(callback, "try_recover callback threw")
 
     async def try_recover_async(
         self,
         fn: Callable[[E], Awaitable[Result[U, E2]]],
     ) -> Result[U, E2]:
-        """Async version of :meth:`try_recover`."""
-        return await _try_or_panic_async(
-            lambda: fn(self.error),
-            "try_recover_async callback threw",
-        )
+        """Async version of :meth:`try_recover` with Result validation."""
+
+        async def callback() -> Result[U, E2]:
+            return cast(
+                "Result[U, E2]",
+                _require_result(
+                    await fn(self.error),
+                    "try_recover_async callback must return a Result",
+                ),
+            )
+
+        return await _try_or_panic_async(callback, "try_recover_async callback threw")
 
     def and_then(self, _fn: Callable[[Never], Result[U, E2]]) -> Err[U, E | E2]:
         """No-op on Err; never invokes the callback."""
@@ -457,6 +539,13 @@ type Result[A, E] = Ok[A, E] | Err[A, E]
 type AnyResult = Ok[object, object] | Err[object, object]
 
 
+def _require_result(value: object, message: str) -> Result[object, object]:
+    """Fail fast when a Result callback violates its return contract."""
+    if not isinstance(value, (Ok, Err)):
+        raise Panic(message, value)
+    return cast("Result[object, object]", value)
+
+
 @overload
 def ok() -> Ok[None, Never]: ...
 
@@ -477,12 +566,12 @@ def err[E](error: E) -> Err[Never, E]:
 
 def is_ok[A, E](result: Result[A, E]) -> TypeGuard[Ok[A, E]]:
     """Return whether a result is Ok."""
-    return result.status == "ok"
+    return isinstance(result, Ok)
 
 
 def is_err[A, E](result: Result[A, E]) -> TypeGuard[Err[A, E]]:
     """Return whether a result is Err."""
-    return result.status == "error"
+    return isinstance(result, Err)
 
 
 def is_error[A, E](result: Result[A, E]) -> TypeGuard[Err[A, E]]:

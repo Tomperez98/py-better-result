@@ -29,7 +29,7 @@ from .codec import (
     codec,
     codec_config,
 )
-from .core import Err, Ok, Panic, Result
+from .core import Err, Ok, Panic, Result, _require_result
 from .error import UnhandledException
 
 if TYPE_CHECKING:
@@ -69,7 +69,13 @@ class AsyncRetryConfig[E]:
     """
 
     times: int = 0
-    delay_ms: float | Callable[[E, TryAsyncContext], float] = 0.0
+    delay_ms: (
+        float
+        | Callable[
+            [E, TryAsyncContext],
+            float | Awaitable[float],
+        ]
+    ) = 0.0
     backoff: Literal["linear", "constant", "exponential"] = "constant"
     should_retry: Callable[[E, TryAsyncContext], bool | Awaitable[bool]] | None = None
     jitter: bool | float = False
@@ -119,12 +125,16 @@ def try_result[A, E](
     def execute(context: TryContext) -> Result[A, E | UnhandledException]:
         try:
             return Ok[A, E | UnhandledException](operation(context))
-        except BaseException as cause:  # noqa: BLE001
+        except Panic:
+            raise
+        except Exception as cause:
             if catch is None:
                 return Err[A, E | UnhandledException](UnhandledException(cause))
             try:
                 return Err[A, E | UnhandledException](catch(cause))
-            except BaseException as catch_error:
+            except Panic:
+                raise
+            except Exception as catch_error:
                 raise Panic(
                     "Result.try catch handler threw",
                     catch_error,
@@ -161,6 +171,16 @@ async def _sleep_for_retry(
     except TimeoutError:
         return not cancel_event.is_set()
     return False
+
+
+def _validate_delay(delay_ms: float) -> float:
+    try:
+        delay = float(delay_ms)
+    except (TypeError, ValueError) as cause:
+        raise Panic("Result.try_async retry delay must be a number", cause) from cause
+    if not math.isfinite(delay) or delay < 0:
+        raise Panic("Result.try_async retry delay must be finite and non-negative")
+    return delay
 
 
 def _static_retry_delay(
@@ -203,7 +223,7 @@ async def try_async[A, E](
 ) -> Result[A, E]: ...
 
 
-async def try_async[A, E](  # noqa: C901
+async def try_async[A, E](
     operation: Callable[[TryAsyncContext], Awaitable[A]],
     catch: Callable[[BaseException], E | Awaitable[E]] | None = None,
     retry: AsyncRetryConfig[E] | None = None,
@@ -213,6 +233,11 @@ async def try_async[A, E](  # noqa: C901
     if policy.times < 0:
         message = f"retry times must not be negative, got {policy.times}"
         raise ValueError(message)
+    if policy.backoff not in {"constant", "linear", "exponential"}:
+        msg = f"unsupported retry backoff: {policy.backoff!r}"
+        raise ValueError(msg)
+    if not callable(policy.delay_ms):
+        _validate_delay(policy.delay_ms)
     jitter_factor = _jitter_factor(jitter=policy.jitter)
 
     async def execute(context: TryAsyncContext) -> Result[A, E | UnhandledException]:
@@ -220,14 +245,18 @@ async def try_async[A, E](  # noqa: C901
             return Ok[A, E | UnhandledException](await operation(context))
         except asyncio.CancelledError:
             raise
-        except BaseException as cause:  # noqa: BLE001
+        except Panic:
+            raise
+        except Exception as cause:
             if catch is None:
                 return Err[A, E | UnhandledException](UnhandledException(cause))
             try:
                 return Err[A, E | UnhandledException](await _await_value(catch(cause)))
             except asyncio.CancelledError:
                 raise
-            except BaseException as catch_error:
+            except Panic:
+                raise
+            except Exception as catch_error:
                 raise Panic(
                     "Result.try_async catch handler threw",
                     catch_error,
@@ -251,7 +280,9 @@ async def try_async[A, E](  # noqa: C901
             continue_retry = await _await_value(retry_predicate(error, context))
         except asyncio.CancelledError:
             raise
-        except BaseException as cause:
+        except Panic:
+            raise
+        except Exception as cause:
             raise Panic(
                 "Result.try_async should_retry predicate threw",
                 cause,
@@ -261,12 +292,16 @@ async def try_async[A, E](  # noqa: C901
 
         if callable(policy.delay_ms):
             delay_callback = cast(
-                "Callable[[E, TryAsyncContext], float]",
+                "Callable[[E, TryAsyncContext], float | Awaitable[float]]",
                 policy.delay_ms,
             )
             try:
-                delay_ms = delay_callback(error, context)
-            except BaseException as cause:
+                delay_ms = await _await_value(delay_callback(error, context))
+            except asyncio.CancelledError:
+                raise
+            except Panic:
+                raise
+            except Exception as cause:
                 raise Panic(
                     "Result.try_async delay_ms callback threw",
                     cause,
@@ -278,7 +313,8 @@ async def try_async[A, E](  # noqa: C901
                 retry_attempt,
             )
             delay_ms *= 1 - jitter_factor + random.random() * jitter_factor  # noqa: S311
-        if not await _sleep_for_retry(float(delay_ms), policy.cancel_event):
+        delay_ms = _validate_delay(delay_ms)
+        if not await _sleep_for_retry(delay_ms, policy.cancel_event):
             break
         context = TryAsyncContext(
             attempt=context.attempt + 1,
@@ -700,9 +736,10 @@ def all[A, E](results: Iterable[Result[A, E]]) -> Result[list[A], E]:
     """Collect success values in input order or return the first error."""
     values: list[A] = []
     for result in results:
-        if isinstance(result, Err):
-            return Err[list[A], E](result.error)
-        values.append(result.value)
+        checked = _require_result(result, "Result.all input must be a Result")
+        if isinstance(checked, Err):
+            return Err[list[A], E](cast("E", checked.error))
+        values.append(cast("A", checked.value))
     return Ok[list[A], E](values)
 
 
@@ -715,12 +752,36 @@ async def _await_results[A, E](
             awaitables.append(cast("Awaitable[Result[A, E]]", result))
         else:
             awaitables.append(_completed(result))
+
+    async def await_one(awaitable: Awaitable[Result[A, E]]) -> Result[A, E]:
+        return await awaitable
+
+    tasks = [asyncio.create_task(await_one(awaitable)) for awaitable in awaitables]
     try:
-        return list(await asyncio.gather(*awaitables))
+        resolved = list(await asyncio.gather(*tasks))
     except asyncio.CancelledError:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         raise
-    except BaseException as cause:
+    except Panic:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    except Exception as cause:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         raise Panic("Result.all_async input awaitable rejected", cause) from cause
+
+    return [
+        cast(
+            "Result[A, E]",
+            _require_result(result, "Result.all_async input must be a Result"),
+        )
+        for result in resolved
+    ]
 
 
 async def _completed[T](value: T) -> T:
@@ -739,10 +800,11 @@ def partition[A, E](results: Iterable[Result[A, E]]) -> tuple[list[A], list[E]]:
     values: list[A] = []
     errors: list[E] = []
     for result in results:
-        if isinstance(result, Ok):
-            values.append(result.value)
+        checked = _require_result(result, "Result.partition input must be a Result")
+        if isinstance(checked, Ok):
+            values.append(cast("A", checked.value))
         else:
-            errors.append(result.error)
+            errors.append(cast("E", checked.error))
     return values, errors
 
 
@@ -771,12 +833,17 @@ def flatten[A, E, E2](result: Result[Result[A, E], E2]) -> Result[A, E | E2]: ..
 
 def flatten[A, E, E2](result: Result[Result[A, E], E2]) -> Result[A, E | E2]:
     """Flatten a nested Result into one Result."""
-    if isinstance(result, Ok):
-        nested = result.value
-        if isinstance(nested, Ok):
-            return Ok[A, E | E2](nested.value)
-        return Err[A, E | E2](nested.error)
-    return Err[A, E | E2](result.error)
+    checked = _require_result(result, "Result.flatten input must be a Result")
+    if isinstance(checked, Ok):
+        nested = checked.value
+        nested_result = _require_result(
+            nested,
+            "Result.flatten nested input must be a Result",
+        )
+        if isinstance(nested_result, Ok):
+            return Ok[A, E | E2](cast("A", nested_result.value))
+        return Err[A, E | E2](cast("E", nested_result.error))
+    return Err[A, E | E2](cast("E2", checked.error))
 
 
 __all__ = [

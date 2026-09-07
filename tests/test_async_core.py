@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Never, TypeVar
+from typing import Never, TypeVar, cast
 
 import pytest
 
@@ -12,7 +12,7 @@ from better_result.core import Err, Ok, Panic, Result, err, ok
 Value = TypeVar("Value")
 
 
-async def _completed(value: Value) -> Value:  # noqa: UP047
+async def _completed[T](value: T) -> T:
     """Return a value after yielding control once."""
     await asyncio.sleep(0)
     return value
@@ -95,6 +95,24 @@ async def test_async_callback_exceptions_become_panics() -> None:
 
     with pytest.raises(Panic, match="tap_error_async callback threw"):
         await err("bad").tap_error_async(rejected_error_side_effect)
+
+
+@pytest.mark.asyncio
+async def test_async_callback_cancellation_propagates() -> None:
+    async def cancel(_: int) -> Result[int, str]:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await ok(1).and_then_async(cancel)
+
+
+@pytest.mark.asyncio
+async def test_async_callbacks_must_return_results() -> None:
+    async def invalid(_: int) -> Result[object, object]:
+        return cast("Result[object, object]", object())
+
+    with pytest.raises(Panic, match="and_then_async callback must return a Result"):
+        await ok(1).and_then_async(invalid)
 
 
 @pytest.mark.asyncio

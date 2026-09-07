@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
-from typing import assert_type
+from typing import assert_type, cast
 
 import pytest
 
@@ -194,3 +195,22 @@ def test_tagged_errors_are_yieldable_as_result_errors() -> None:
     assert yielded.error._tag == "NotFoundError"
     with pytest.raises(Panic, match="Unreachable"):
         next(iterator)
+
+
+def test_tagged_error_to_json_is_json_compatible() -> None:
+    payload = TaggedError(cause=object(), nested={"items": {1, 2}}).to_json()
+
+    json.dumps(payload)
+    assert isinstance(payload["cause"], str)
+    nested = cast("dict[str, object]", payload["nested"])
+    assert isinstance(nested["items"], list)
+
+
+def test_tagged_error_detection_is_nominal() -> None:
+    class FakeTaggedError(Exception):
+        _tag = "Fake"
+
+        def to_json(self) -> dict[str, object]:
+            return {}
+
+    assert not is_tagged_error(FakeTaggedError())

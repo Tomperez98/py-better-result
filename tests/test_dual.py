@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import assert_type
+from typing import assert_type, cast
 
 import pytest
 
@@ -49,3 +49,27 @@ def test_dual_supports_three_and_four_argument_functions() -> None:
 def test_dual_rejects_non_positive_arities() -> None:
     with pytest.raises(ValueError, match="arity must be positive"):
         dual(0, lambda value: value)
+
+
+def test_dual_supports_all_declared_partial_forms() -> None:
+    make_url = dual(
+        4,
+        lambda scheme, host, path, query: f"{scheme}://{host}/{path}?{query}",
+    )
+
+    assert make_url("example.com", "search", "q=1")("https") == (
+        "https://example.com/search?q=1"
+    )
+    assert make_url("search", "q=1")("https", "example.com") == (
+        "https://example.com/search?q=1"
+    )
+    assert make_url("q=1")("https", "example.com", "search") == (
+        "https://example.com/search?q=1"
+    )
+
+
+def test_dual_rejects_excess_arguments() -> None:
+    add = dual(2, lambda left, right: left + right)
+
+    with pytest.raises(TypeError, match="expected at most 2 arguments"):
+        cast("Callable[..., object]", add)(1, 2, 3)

@@ -11,9 +11,9 @@ from __future__ import annotations
 import traceback
 import types
 from collections.abc import Callable, Generator, Mapping, Sequence
-from typing import Any, ClassVar, Never, TypeGuard, TypeVar, overload
+from typing import Any, ClassVar, Never, TypeGuard, TypeVar, cast, overload
 
-from .core import Err, err, panic
+from .core import Err, Panic, _json_safe, err, panic
 
 TaggedErrorLike = TypeVar("TaggedErrorLike", bound="TaggedError")
 HandlerResult = TypeVar("HandlerResult")
@@ -111,8 +111,8 @@ class TaggedError(Exception):
         }
 
     def to_json(self) -> dict[str, object | None]:
-        """Return a JSON-compatible representation of this error."""
-        return self.to_dict()
+        """Return a recursively JSON-compatible representation of this error."""
+        return cast("dict[str, object | None]", _json_safe(self.to_dict()))
 
     def match(
         self,
@@ -135,12 +135,8 @@ def tagged_error(tag: str) -> type[TaggedError]:
 
 
 def is_tagged_error(value: object) -> TypeGuard[TaggedError]:
-    """Return whether *value* has the TaggedError protocol shape."""
-    return (
-        isinstance(value, BaseException)
-        and isinstance(getattr(value, "_tag", None), str)
-        and callable(getattr(value, "to_json", None))
-    )
+    """Return whether *value* is a TaggedError instance."""
+    return isinstance(value, TaggedError)
 
 
 def _serialize_cause(cause: object | None) -> object | None:
@@ -169,7 +165,9 @@ def _match_error[HandlerResult](
     try:
         handler = handlers[_tag_of(error)]
         return handler(error)
-    except BaseException as cause:  # noqa: BLE001
+    except Panic:
+        raise
+    except Exception as cause:
         panic("match_error handler threw", cause)
 
 
@@ -214,7 +212,9 @@ def _apply_partial[HandlerResult](
         if tag in handlers:
             return handlers[tag](error)
         return on_unhandled(error)
-    except BaseException as cause:  # noqa: BLE001
+    except Panic:
+        raise
+    except Exception as cause:
         panic("match_error_partial handler threw", cause)
 
 

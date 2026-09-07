@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Never
+from typing import Any, Never, cast
 
 import pytest
 
@@ -138,6 +138,50 @@ async def test_all_async_and_partition_async_preserve_input_order() -> None:
 
     with pytest.raises(Panic, match="input awaitable rejected"):
         await all_async([rejected()])
+
+
+@pytest.mark.asyncio
+async def test_try_async_validates_retry_policy_and_preserves_panic() -> None:
+    async def operation(_context: TryAsyncContext) -> int:
+        raise ValueError("temporary")
+
+    with pytest.raises(ValueError, match="unsupported retry backoff"):
+        await try_async(
+            operation,
+            retry=AsyncRetryConfig[object](backoff=cast("Any", "invalid")),
+        )
+
+    with pytest.raises(Panic):
+        await try_async(
+            lambda _context: _raise_panic(),
+            retry=AsyncRetryConfig[object](times=1),
+        )
+
+
+async def _raise_panic() -> int:
+    raise Panic("bug")
+
+
+@pytest.mark.asyncio
+async def test_all_async_cancels_siblings_when_an_input_rejects() -> None:
+    cancelled = asyncio.Event()
+
+    async def rejected() -> Result[int, str]:
+        await asyncio.sleep(0)
+        raise RuntimeError("network failed")
+
+    async def sibling() -> Result[int, str]:
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return Ok[int, str](1)
+
+    with pytest.raises(Panic, match="input awaitable rejected"):
+        await all_async([rejected(), sibling()])
+
+    assert cancelled.is_set()
 
 
 async def _completed[T](value: T) -> T:

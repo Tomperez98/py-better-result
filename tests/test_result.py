@@ -49,6 +49,14 @@ def test_try_result_returns_unhandled_exception_without_a_catch_handler() -> Non
     assert isinstance(result.error.cause, ValueError)
 
 
+def test_try_result_preserves_process_control_exceptions() -> None:
+    with pytest.raises(KeyboardInterrupt):
+        try_result(lambda _context: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    with pytest.raises(Panic):
+        try_result(lambda _context: (_ for _ in ()).throw(Panic("bug")))
+
+
 def test_try_result_uses_catch_handler_and_panics_if_catch_fails() -> None:
     result = try_result(
         lambda _context: (_ for _ in ()).throw(ValueError("bad")),

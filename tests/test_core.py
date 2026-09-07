@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Never, assert_type
+from typing import TYPE_CHECKING, Never, assert_type, cast
 
 import pytest
 
@@ -266,3 +266,35 @@ def test_assertion_helpers_fail_when_shape_is_wrong() -> None:
         assert_ok(err("bad"), 1)  # type: ignore[arg-type]
     with pytest.raises(AssertionError):
         assert_err(ok(1), "bad")  # type: ignore[arg-type]
+
+
+def test_result_variants_are_immutable_and_guards_agree() -> None:
+    success = ok(1)
+    failure = err("bad")
+
+    with pytest.raises(AttributeError):
+        success.value = 2  # ty: ignore[invalid-assignment]
+    with pytest.raises(AttributeError):
+        success.status = "error"  # ty: ignore[invalid-assignment]
+    with pytest.raises(AttributeError):
+        failure.error = "changed"  # ty: ignore[invalid-assignment]
+    with pytest.raises(AttributeError):
+        failure.status = "ok"  # ty: ignore[invalid-assignment]
+
+    assert is_ok(success)
+    assert not is_err(success)
+    assert not is_ok(failure)
+    assert is_err(failure)
+
+
+def test_result_callbacks_must_return_results() -> None:
+    def invalid_success(_: int) -> Result[object, object]:
+        return cast("Result[object, object]", object())
+
+    def invalid_error(_: str) -> Result[object, object]:
+        return cast("Result[object, object]", object())
+
+    with pytest.raises(Panic, match="and_then callback must return a Result"):
+        ok(1).and_then(invalid_success)
+    with pytest.raises(Panic, match="try_recover callback must return a Result"):
+        err("bad").try_recover(invalid_error)

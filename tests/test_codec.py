@@ -173,6 +173,24 @@ def test_missing_payload_is_passed_to_the_selected_schema() -> None:
 
 
 @pytest.mark.asyncio
+async def test_codec_preserves_schema_cancellation() -> None:
+    async def cancel(_value: int) -> str:
+        raise asyncio.CancelledError
+
+    result_codec = codec(
+        codec_config(
+            serialize_ok=cancel,
+            serialize_err=encode_error,
+            deserialize_ok=decode_number,
+            deserialize_err=decode_error,
+        ),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await result_codec.serialize_async(Ok[int, str](1))
+
+
+@pytest.mark.asyncio
 async def test_codec_supports_async_schemas() -> None:
     async def async_encode(value: int) -> str:
         await asyncio.sleep(0)

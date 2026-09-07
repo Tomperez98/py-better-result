@@ -9,12 +9,13 @@ or :class:`SchemaFailure`; throwing from validation is a defect and becomes
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypedDict, cast
 
-from .core import Err, Ok, Result, panic
+from .core import Err, Ok, Panic, Result, panic
 from .error import (
     ResultCodecIssue,
     ResultDeserializationError,
@@ -110,7 +111,9 @@ def _run_validation[T, U, E](
 ) -> Result[U, E] | Awaitable[Result[U, E]]:
     try:
         validation = _validate(schema, value)
-    except BaseException as cause:  # noqa: BLE001
+    except Panic:
+        raise
+    except Exception as cause:
         panic(panic_message, cause)
 
     if inspect.isawaitable(validation):
@@ -118,7 +121,11 @@ def _run_validation[T, U, E](
         async def finish_async() -> Result[U, E]:
             try:
                 resolved = await validation
-            except BaseException as cause:  # noqa: BLE001
+            except asyncio.CancelledError:
+                raise
+            except Panic:
+                raise
+            except Exception as cause:
                 panic(panic_message, cause)
             return cast(
                 "Result[U, E]",
@@ -222,7 +229,13 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         self,
         result: Result[OkInput, ErrInput],
     ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
-        """Await serialization for synchronous or asynchronous schemas."""
+        """
+        Await serialization for synchronous or asynchronous schemas.
+
+        Use this method whenever a configured schema may be asynchronous.
+        The synchronous :meth:`serialize` method returns an awaitable in that
+        configuration.
+        """
         return cast(
             "Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]",
             await _await_operation(self.serialize(result)),
@@ -283,7 +296,13 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         self,
         value: object,
     ) -> Result[OkOutput, ErrOutput | ResultDeserializationError]:
-        """Await deserialization for synchronous or asynchronous schemas."""
+        """
+        Await deserialization for synchronous or asynchronous schemas.
+
+        Use this method whenever a configured schema may be asynchronous.
+        The synchronous :meth:`deserialize` method returns an awaitable in
+        that configuration.
+        """
         return cast(
             "Result[OkOutput, ErrOutput | ResultDeserializationError]",
             await _await_operation(self.deserialize(value)),

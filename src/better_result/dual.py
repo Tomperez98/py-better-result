@@ -123,11 +123,19 @@ def dual[R](arity: int, body: Callable[..., R]) -> Callable[..., object]:
         raise ValueError(message)
 
     def wrapper(*args: object) -> object:
-        if len(args) >= arity:
-            return body(*args[:arity])
+        if len(args) > arity:
+            msg = f"expected at most {arity} arguments, got {len(args)}"
+            raise TypeError(msg)
+        if len(args) == arity:
+            return body(*args)
 
-        def data_last(first: object) -> R:
-            return body(first, *args)
+        remaining = arity - len(args)
+
+        def data_last(*leading: object) -> R:
+            if len(leading) != remaining:
+                msg = f"expected {remaining} arguments, got {len(leading)}"
+                raise TypeError(msg)
+            return body(*leading, *args)
 
         return data_last
 

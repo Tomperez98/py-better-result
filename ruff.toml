@@ -1,0 +1,30 @@
+target-version = "py312"
+
+[lint]
+select = ["ALL"]
+ignore = [
+  "ARG001",
+  "ARG005",
+  "COM812",
+  "CPY001",
+  "D100",
+  "D101",
+  "D102",
+  "D103",
+  "D104",
+  "D107",
+  "D203",
+  "D212",
+  "D401",
+  "E501",
+  "EM101",
+  "N818",
+  "PLR2004",
+  "S101",
+  "SLF001",
+  "TRY003",
+]
+
+[lint.isort]
+combine-as-imports = true
+required-imports = ["from __future__ import annotations"]

@@ -10,8 +10,7 @@ from typing import Never
 import pytest
 
 from better_result.collections import all_results_async, partition_async
-from better_result.combinators import and_then_async
-from better_result.core import Err, Ok, Panic, Result, err, ok
+from better_result.core import Err, Ok, PanicError, Result
 from better_result.error import TaggedError
 from better_result.retry import AsyncRetryConfig, TryAsyncContext, try_async
 
@@ -40,7 +39,7 @@ class ParseError(TaggedError, tag="ParseError"):
         super().__init__(message="Could not parse JSON", cause=cause)
 
 
-class RateLimited(TaggedError, tag="RateLimited"):
+class RateLimitedError(TaggedError, tag="RateLimited"):
     retry_after_ms: float
 
     def __init__(self, retry_after_ms: float = 0.0) -> None:
@@ -62,7 +61,8 @@ def parse_json_value(text: str) -> object:
     value = json.loads(text)
     if value is None or isinstance(value, (bool, float, int, str, list, dict)):
         return value
-    raise TypeError("JSON decoder returned an unsupported value")
+    msg = "JSON decoder returned an unsupported value"
+    raise TypeError(msg)
 
 
 async def parse_json(text: str) -> Result[object, ParseError]:
@@ -96,7 +96,7 @@ async def get_user_profile(
 
     def check_response(selected: Response) -> Result[Response, HttpResponseError]:
         if selected.ok:
-            return ok(selected)
+            return Ok(selected)
         return Err(HttpResponseError(selected.status, selected.url))
 
     checked = fetched.and_then(check_response)
@@ -137,7 +137,7 @@ async def test_async_workflow_uses_await_and_explicit_short_circuiting() -> None
 
 
 @pytest.mark.asyncio
-async def test_async_combinator_pipeline_matches_promise_result_examples() -> None:
+async def test_async_result_pipeline_uses_instance_methods() -> None:
     async def fetch_posts(user: dict[str, object]) -> Result[list[str], NetworkError]:
         user_id = user["id"]
         return Ok([f"post-for-{user_id}"])
@@ -145,14 +145,9 @@ async def test_async_combinator_pipeline_matches_promise_result_examples() -> No
     user: Result[dict[str, object], NetworkError] = Ok(
         {"id": 1, "name": "Alice"},
     )
-    result = await and_then_async(user, fetch_posts)
+    result = await user.and_then_async(fetch_posts)
     assert isinstance(result, Ok)
     assert result.value == ["post-for-1"]
-
-    posts_later = and_then_async(fetch_posts)
-    result_later = await posts_later(user)
-    assert isinstance(result_later, Ok)
-    assert result_later.value == ["post-for-1"]
 
 
 @pytest.mark.asyncio
@@ -162,13 +157,14 @@ async def test_async_retry_examples_are_bounded_and_deterministic() -> None:
     async def call_api(context: TryAsyncContext) -> str:
         attempts.append(context.attempt)
         if context.attempt < 3:
-            raise RuntimeError("temporary")
+            msg = "temporary"
+            raise RuntimeError(msg)
         return "ready"
 
     result = await try_async(
         call_api,
-        lambda _cause: RateLimited(),
-        AsyncRetryConfig[RateLimited](
+        lambda _cause: RateLimitedError(),
+        AsyncRetryConfig[RateLimitedError](
             times=3,
             delay_ms=0,
             backoff="exponential",
@@ -190,16 +186,17 @@ async def test_async_cancellation_stops_retry_scheduling() -> None:
 
     async def call_api(context: TryAsyncContext) -> str:
         attempts.append(context.attempt)
-        raise RuntimeError("temporary")
+        msg = "temporary"
+        raise RuntimeError(msg)
 
-    def stop_retry(_error: RateLimited, _context: TryAsyncContext) -> bool:
+    def stop_retry(_error: RateLimitedError, _context: TryAsyncContext) -> bool:
         cancel_event.set()
         return True
 
     result = await try_async(
         call_api,
-        lambda _cause: RateLimited(),
-        AsyncRetryConfig[RateLimited](
+        lambda _cause: RateLimitedError(),
+        AsyncRetryConfig[RateLimitedError](
             times=3,
             delay_ms=100,
             should_retry=stop_retry,
@@ -208,7 +205,7 @@ async def test_async_cancellation_stops_retry_scheduling() -> None:
     )
 
     assert isinstance(result, Err)
-    assert isinstance(result.error, RateLimited)
+    assert isinstance(result.error, RateLimitedError)
     assert attempts == [1]
 
 
@@ -216,17 +213,18 @@ async def test_async_cancellation_stops_retry_scheduling() -> None:
 async def test_async_collections_collect_and_partition_without_generators() -> None:
     async def load(value: int) -> Result[int, Never]:
         await asyncio.sleep(0)
-        return ok(value)
+        return Ok(value)
 
-    collected = await all_results_async([load(1), load(2), ok(3)])
+    collected = await all_results_async([load(1), load(2), Ok(3)])
     assert isinstance(collected, Ok)
     assert collected.value == [1, 2, 3]
 
-    partitioned = await partition_async([load(1), err("missing"), load(3)])
+    partitioned = await partition_async([load(1), Err("missing"), load(3)])
     assert partitioned == ([1, 3], ["missing"])
 
     async def rejected() -> Result[int, str]:
-        raise RuntimeError("broken promise")
+        msg = "broken promise"
+        raise RuntimeError(msg)
 
-    with pytest.raises(Panic, match="input awaitable rejected"):
+    with pytest.raises(PanicError, match="input awaitable rejected"):
         await all_results_async([rejected()])

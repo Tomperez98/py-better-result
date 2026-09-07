@@ -6,18 +6,9 @@ from typing import Never, assert_type
 
 import pytest
 
-from better_result.collections import all_results, flatten, partition
-from better_result.combinators import (
-    and_then,
-    map_error,
-    map_result,
-    match,
-    tap,
-    try_recover,
-    unwrap_or,
-)
-from better_result.core import Err, Ok, Panic, Result, err, ok
-from better_result.error import UnhandledException
+from better_result.collections import all_results, partition
+from better_result.core import Err, Ok, PanicError, Result
+from better_result.error import UnhandledError
 from better_result.retry import RetryConfig, TryContext, try_result
 
 
@@ -27,7 +18,8 @@ def test_try_result_returns_success_and_tracks_attempts() -> None:
     def operation(context: TryContext) -> int:
         attempts.append(context.attempt)
         if context.attempt < 3:
-            raise ValueError("not ready")
+            msg = "not ready"
+            raise ValueError(msg)
         return 42
 
     result = try_result(operation, retry=RetryConfig(times=2))
@@ -41,7 +33,7 @@ def test_try_result_returns_unhandled_exception_without_a_catch_handler() -> Non
     result = try_result(lambda _context: (_ for _ in ()).throw(ValueError("bad")))
 
     assert isinstance(result, Err)
-    assert isinstance(result.error, UnhandledException)
+    assert isinstance(result.error, UnhandledError)
     assert isinstance(result.error.cause, ValueError)
 
 
@@ -49,8 +41,8 @@ def test_try_result_preserves_process_control_exceptions() -> None:
     with pytest.raises(KeyboardInterrupt):
         try_result(lambda _context: (_ for _ in ()).throw(KeyboardInterrupt()))
 
-    with pytest.raises(Panic):
-        try_result(lambda _context: (_ for _ in ()).throw(Panic("bug")))
+    with pytest.raises(PanicError):
+        try_result(lambda _context: (_ for _ in ()).throw(PanicError("bug")))
 
 
 def test_try_result_uses_catch_handler_and_panics_if_catch_fails() -> None:
@@ -62,44 +54,32 @@ def test_try_result_uses_catch_handler_and_panics_if_catch_fails() -> None:
     assert result.error == "handled: bad"
 
     def broken_catch(_cause: BaseException) -> str:
-        raise RuntimeError("catch failed")
+        msg = "catch failed"
+        raise RuntimeError(msg)
 
-    with pytest.raises(Panic, match="catch handler threw"):
+    with pytest.raises(PanicError, match="catch handler threw"):
         try_result(
             lambda _context: (_ for _ in ()).throw(ValueError("bad")),
             broken_catch,
         )
 
 
-def test_result_combinators_support_data_first_and_data_last_forms() -> None:
-    success = ok(2)
-    failure = err("bad")
+def test_result_transformations_use_instance_methods() -> None:
+    success = Ok(2)
+    failure = Err("bad")
 
-    mapped = map_result(success, lambda value: value * 2)
+    mapped = success.map(lambda value: value * 2)
     assert isinstance(mapped, Ok)
     assert mapped.value == 4
-    map_value = map_result(lambda value: value * 2)
-    mapped_later = map_value(success)
-    assert isinstance(mapped_later, Ok)
-    assert mapped_later.value == 4
-    mapped_error = map_error(failure, str.upper)
+    mapped_error = failure.map_error(str.upper)
     assert isinstance(mapped_error, Err)
     assert mapped_error.error == "BAD"
-    mapped_error_later = map_error(str.upper)(failure)
-    assert isinstance(mapped_error_later, Err)
-    assert mapped_error_later.error == "BAD"
-    chained = and_then(success, lambda value: ok(str(value)))
+    chained = success.and_then(lambda value: Ok(str(value)))
     assert isinstance(chained, Ok)
     assert chained.value == "2"
-    chained_later = and_then(lambda value: ok(str(value)))(success)
-    assert isinstance(chained_later, Ok)
-    assert chained_later.value == "2"
-    recovered = try_recover(failure, lambda value: ok(len(value)))
+    recovered = failure.try_recover(lambda value: Ok(len(value)))
     assert isinstance(recovered, Ok)
     assert recovered.value == 3
-    recovered_later = try_recover(lambda value: ok(len(value)))(failure)
-    assert isinstance(recovered_later, Ok)
-    assert recovered_later.value == 3
 
 
 def test_result_observers_and_collectors_preserve_order() -> None:
@@ -110,36 +90,34 @@ def test_result_observers_and_collectors_preserve_order() -> None:
     ]
     seen: list[int] = []
 
-    assert match(results[0], {"ok": lambda value: value * 2, "err": lambda _: 0}) == 2
-    assert tap(results[0], seen.append) is results[0]
+    assert results[0].match(lambda value: value * 2, lambda _: 0) == 2
+    assert results[0].tap(seen.append) is results[0]
     assert seen == [1]
-    assert unwrap_or(results[1], 99) == 99
-    assert unwrap_or(results[0], None) == 1
-    assert unwrap_or(99)(results[0]) == 1
-    assert unwrap_or(None)(results[0]) == 1
+    assert results[1].unwrap_or(99) == 99
+    assert results[0].unwrap_or(None) == 1
     collected = all_results(results)
     assert isinstance(collected, Err)
     assert collected.error == "bad"
-    collected_successes = all_results([ok(1), ok(2)])
+    collected_successes = all_results([Ok(1), Ok(2)])
     assert isinstance(collected_successes, Ok)
     assert collected_successes.value == [1, 2]
     assert partition(results) == ([1, 2], ["bad"])
 
 
 def test_flatten_collapses_both_nested_variants() -> None:
-    flattened_success = flatten(ok(ok(42)))
+    flattened_success = Ok(Ok(42)).flatten()
     assert isinstance(flattened_success, Ok)
     assert flattened_success.value == 42
-    flattened_inner_error = flatten(ok(err("inner")))
+    flattened_inner_error = Ok(Err("inner")).flatten()
     assert isinstance(flattened_inner_error, Err)
     assert flattened_inner_error.error == "inner"
-    flattened_outer_error = flatten(Err("outer"))
+    flattened_outer_error = Err("outer").flatten()
     assert isinstance(flattened_outer_error, Err)
     assert flattened_outer_error.error == "outer"
 
 
 def test_result_utility_types_are_inferred() -> None:
-    success: Result[int, Never] = ok(2)
+    success: Result[int, Never] = Ok(2)
     assert_type(success.map(str), Ok[str])
-    successes: list[Result[int, Never]] = [ok(1), ok(2)]
+    successes: list[Result[int, Never]] = [Ok(1), Ok(2)]
     assert_type(all_results(successes), Result[list[int], Never])

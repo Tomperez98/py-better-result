@@ -16,11 +16,9 @@ import traceback
 from collections.abc import Mapping
 from typing import (
     TYPE_CHECKING,
-    ClassVar,
     Generic,
     Literal,
     Never,
-    TypedDict,
     TypeGuard,
     TypeVar,
     cast,
@@ -31,17 +29,13 @@ from typing import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Generator
 
-A = TypeVar("A")
-B = TypeVar("B")
-E = TypeVar("E")
 E_co = TypeVar("E_co", covariant=True)
 E2 = TypeVar("E2")
-T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
 U = TypeVar("U")
 
 
-class Panic(Exception):
+class PanicError(Exception):
     """
     An unrecoverable failure raised by a Result operation.
 
@@ -67,11 +61,6 @@ class Panic(Exception):
 
         self.stack = "".join(traceback.format_stack()[:-1])
 
-    @staticmethod
-    def is_panic(value: object) -> TypeGuard[Panic]:
-        """Return whether *value* is a Panic, including subclasses."""
-        return isinstance(value, Panic)
-
     def to_dict(self) -> dict[str, object | None]:
         """Return this panic as a Python dictionary."""
         return {
@@ -89,16 +78,17 @@ class Panic(Exception):
     def to_safe_dict(self) -> dict[str, object | None]:
         """Return panic metadata without diagnostic stack traces."""
         return cast(
-            "dict[str, object | None]", _without_diagnostic_stack(self.to_dict())
+            "dict[str, object | None]",
+            _without_diagnostic_stack(self.to_dict()),
         )
 
     def to_safe_json(self) -> dict[str, object | None]:
         """Return a JSON-compatible panic payload safe for transport."""
         return cast("dict[str, object | None]", _json_safe(self.to_safe_dict()))
 
-    def __iter__(self) -> Generator[Err[Panic], None, Never]:
+    def __iter__(self) -> Generator[Err[PanicError], None, Never]:
         """Yield this panic as an Err, then fail if iteration continues."""
-        yield err(self)
+        yield Err(self)
         panic("Unreachable: Err yielded in Panic but generator continued", self)
 
 
@@ -154,14 +144,14 @@ def _json_safe(value: object, seen: set[int] | None = None) -> object:
     return repr(value)
 
 
-def is_panic(value: object) -> TypeGuard[Panic]:
+def is_panic(value: object) -> TypeGuard[PanicError]:
     """Return whether *value* is a Panic."""
-    return isinstance(value, Panic)
+    return isinstance(value, PanicError)
 
 
 def panic(message: str, cause: object | None = None) -> Never:
     """Raise an unrecoverable :class:`Panic`."""
-    raise Panic(message, cause)
+    raise PanicError(message, cause)
 
 
 C = TypeVar("C")
@@ -171,10 +161,10 @@ def _try_or_panic[C](fn: Callable[[], C], message: str) -> C:
     """Execute a callback and wrap ordinary callback failures in Panic."""
     try:
         return fn()
-    except Panic:
+    except PanicError:
         raise
     except Exception as cause:
-        raise Panic(message, cause) from cause
+        raise PanicError(message, cause) from cause
 
 
 async def _try_or_panic_async[C](fn: Callable[[], Awaitable[C]], message: str) -> C:
@@ -183,34 +173,10 @@ async def _try_or_panic_async[C](fn: Callable[[], Awaitable[C]], message: str) -
         return await fn()
     except asyncio.CancelledError:
         raise
-    except Panic:
+    except PanicError:
         raise
     except Exception as cause:
-        raise Panic(message, cause) from cause
-
-
-type Handlers[T] = Mapping[str, Callable[..., T]]
-
-
-class ResultHandlers[T, E, U](TypedDict):
-    """Required handlers for the two fixed Result branches."""
-
-    ok: Callable[[T], U]
-    err: Callable[[E], U]
-
-
-class TapHandlers[T, E](TypedDict):
-    """Required synchronous observers for both Result branches."""
-
-    ok: Callable[[T], object]
-    err: Callable[[E], object]
-
-
-class AsyncTapHandlers[T, E](TypedDict):
-    """Required asynchronous observers for both Result branches."""
-
-    ok: Callable[[T], Awaitable[object]]
-    err: Callable[[E], Awaitable[object]]
+        raise PanicError(message, cause) from cause
 
 
 class Ok(Generic[T_co]):  # noqa: UP046
@@ -218,7 +184,6 @@ class Ok(Generic[T_co]):  # noqa: UP046
 
     __slots__ = ("value",)
     __hash__ = None
-    status: ClassVar[Literal["ok"]] = "ok"
     value: T_co
 
     def __init__(self, value: T_co) -> None:
@@ -226,7 +191,8 @@ class Ok(Generic[T_co]):  # noqa: UP046
 
     @override
     def __setattr__(self, _name: str, _value: object) -> Never:
-        raise AttributeError("Ok is immutable")
+        msg = "Ok is immutable"
+        raise AttributeError(msg)
 
     @override
     def __repr__(self) -> str:
@@ -239,12 +205,6 @@ class Ok(Generic[T_co]):  # noqa: UP046
         if not isinstance(other, Ok):
             return False
         return type(self) is type(other) and self.value == other.value
-
-    def is_ok(self) -> bool:
-        return True
-
-    def is_err(self) -> bool:
-        return False
 
     def map(self, fn: Callable[[T_co], U]) -> Ok[U]:
         """Transform the success value, panicking if the callback fails."""
@@ -305,16 +265,18 @@ class Ok(Generic[T_co]):  # noqa: UP046
 
         return await _try_or_panic_async(callback, "and_then_async callback threw")
 
-    @overload
-    def match(self, handlers: ResultHandlers[T_co, Never, U]) -> U: ...
-
-    @overload
-    def match(self, handlers: Handlers[U]) -> U: ...
-
-    def match(self, handlers: ResultHandlers[T_co, Never, U] | Handlers[U]) -> U:
-        """Call the ``ok`` branch of a pair of match handlers."""
-        handler = cast("Callable[[T_co], U]", handlers["ok"])
-        return _try_or_panic(lambda: handler(self.value), "match ok handler threw")
+    def match(
+        self,
+        on_ok: Callable[[T_co], U],
+        on_err: Callable[[Never], U],
+    ) -> U:
+        """Call the success callback from two explicit branch callbacks."""
+        if not callable(on_ok) or not callable(on_err):
+            panic("match callbacks must be callable")
+        return _try_or_panic(
+            lambda: on_ok(self.value),
+            "match ok handler threw",
+        )
 
     def unwrap(self, _message: str | None = None) -> T_co:
         """Extract the success value."""
@@ -324,7 +286,7 @@ class Ok(Generic[T_co]):  # noqa: UP046
         """Extract the value, ignoring the fallback."""
         return self.value
 
-    def tap(self, fn: Callable[[T_co], object]) -> Ok[T_co]:
+    def tap(self, fn: Callable[[T_co], None]) -> Ok[T_co]:
         """Run a success side effect and return this result."""
 
         def callback() -> Ok[T_co]:
@@ -333,7 +295,7 @@ class Ok(Generic[T_co]):  # noqa: UP046
 
         return _try_or_panic(callback, "tap callback threw")
 
-    async def tap_async(self, fn: Callable[[T_co], Awaitable[object]]) -> Ok[T_co]:
+    async def tap_async(self, fn: Callable[[T_co], Awaitable[None]]) -> Ok[T_co]:
         """Run an async success side effect and return this result."""
 
         async def callback() -> Ok[T_co]:
@@ -342,64 +304,37 @@ class Ok(Generic[T_co]):  # noqa: UP046
 
         return await _try_or_panic_async(callback, "tap_async callback threw")
 
-    def tap_error(self, _fn: Callable[[Never], object]) -> Ok[T_co]:
+    def tap_error(self, _fn: Callable[[Never], None]) -> Ok[T_co]:
         """No-op on Ok."""
         return self
 
     async def tap_error_async(
         self,
-        _fn: Callable[[Never], Awaitable[object]],
+        _fn: Callable[[Never], Awaitable[None]],
     ) -> Ok[T_co]:
         """Async no-op on Ok."""
         return self
 
     @overload
-    def tap_both(self, handlers: TapHandlers[T_co, Never]) -> Ok[T_co]: ...
+    def flatten[A](self: Ok[Ok[A]]) -> Result[A, Never]: ...
 
     @overload
-    def tap_both(self, handlers: Handlers[object]) -> Ok[T_co]: ...
+    def flatten[E](self: Ok[Err[E]]) -> Result[Never, E]: ...
 
-    def tap_both(
-        self, handlers: TapHandlers[T_co, Never] | Handlers[object]
-    ) -> Ok[T_co]:
-        """Run only the ``ok`` side effect and return this result."""
-        handler = cast("Callable[[T_co], object]", handlers["ok"])
+    def flatten[A, E](self: Ok[Result[A, E]]) -> Result[A, E]:
+        """Flatten a nested Result, panicking when the value is not a Result."""
+        nested = cast(
+            "Result[A, E]",
+            _require_result(self.value, "Result.flatten nested input must be a Result"),
+        )
+        if isinstance(nested, Ok):
+            return Ok(nested.value)
+        return Err(nested.error)
 
-        def callback() -> Ok[T_co]:
-            handler(self.value)
-            return self
-
-        return _try_or_panic(callback, "tap_both ok callback threw")
-
-    @overload
-    async def tap_both_async(
-        self,
-        handlers: AsyncTapHandlers[T_co, Never],
-    ) -> Ok[T_co]: ...
-
-    @overload
-    async def tap_both_async(
-        self,
-        handlers: Handlers[Awaitable[object]],
-    ) -> Ok[T_co]: ...
-
-    async def tap_both_async(
-        self,
-        handlers: AsyncTapHandlers[T_co, Never] | Handlers[Awaitable[object]],
-    ) -> Ok[T_co]:
-        """Async version of :meth:`tap_both`."""
-        handler = cast("Callable[[T_co], Awaitable[object]]", handlers["ok"])
-
-        async def callback() -> Ok[T_co]:
-            await handler(self.value)
-            return self
-
-        return await _try_or_panic_async(callback, "tap_both_async ok callback threw")
-
-    def __iter__(self) -> Generator[object, None, T_co]:
+    def __iter__(self) -> Generator[None, None, T_co]:
         """Return the value through ``yield from`` without yielding it."""
         if False:  # Make this a generator so StopIteration carries the value.
-            yield self.value
+            yield None
         return self.value
 
 
@@ -408,7 +343,6 @@ class Err(Generic[E_co]):  # noqa: UP046
 
     __slots__ = ("error",)
     __hash__ = None
-    status: ClassVar[Literal["error"]] = "error"
     error: E_co
 
     def __init__(self, error: E_co) -> None:
@@ -416,7 +350,8 @@ class Err(Generic[E_co]):  # noqa: UP046
 
     @override
     def __setattr__(self, _name: str, _value: object) -> Never:
-        raise AttributeError("Err is immutable")
+        msg = "Err is immutable"
+        raise AttributeError(msg)
 
     @override
     def __repr__(self) -> str:
@@ -429,12 +364,6 @@ class Err(Generic[E_co]):  # noqa: UP046
         if not isinstance(other, Err):
             return False
         return type(self) is type(other) and self.error == other.error
-
-    def is_ok(self) -> bool:
-        return False
-
-    def is_err(self) -> bool:
-        return True
 
     def map(self, _fn: Callable[[Never], U]) -> Err[E_co]:
         """No-op on Err; the success type changes only at the type level."""
@@ -486,16 +415,18 @@ class Err(Generic[E_co]):  # noqa: UP046
         """Async no-op on Err; never invokes the callback."""
         return self
 
-    @overload
-    def match(self, handlers: ResultHandlers[Never, E_co, U]) -> U: ...
-
-    @overload
-    def match(self, handlers: Handlers[U]) -> U: ...
-
-    def match(self, handlers: ResultHandlers[Never, E_co, U] | Handlers[U]) -> U:
-        """Call the ``err`` branch of a pair of match handlers."""
-        handler = cast("Callable[[E_co], U]", handlers["err"])
-        return _try_or_panic(lambda: handler(self.error), "match err handler threw")
+    def match(
+        self,
+        on_ok: Callable[[Never], U],
+        on_err: Callable[[E_co], U],
+    ) -> U:
+        """Call the error callback from two explicit branch callbacks."""
+        if not callable(on_ok) or not callable(on_err):
+            panic("match callbacks must be callable")
+        return _try_or_panic(
+            lambda: on_err(self.error),
+            "match err handler threw",
+        )
 
     def unwrap(self, message: str | None = None) -> Never:
         """Raise a Panic because this result contains an error."""
@@ -508,11 +439,11 @@ class Err(Generic[E_co]):  # noqa: UP046
         """Return the fallback value."""
         return fallback
 
-    def tap(self, _fn: Callable[[Never], object]) -> Err[E_co]:
+    def tap(self, _fn: Callable[[Never], None]) -> Err[E_co]:
         """No-op on Err."""
         return self
 
-    def tap_error(self, fn: Callable[[E_co], object]) -> Err[E_co]:
+    def tap_error(self, fn: Callable[[E_co], None]) -> Err[E_co]:
         """Run an error side effect and return this result."""
 
         def callback() -> Err[E_co]:
@@ -521,13 +452,11 @@ class Err(Generic[E_co]):  # noqa: UP046
 
         return _try_or_panic(callback, "tap_error callback threw")
 
-    async def tap_async(self, _fn: Callable[[Never], Awaitable[object]]) -> Err[E_co]:
+    async def tap_async(self, _fn: Callable[[Never], Awaitable[None]]) -> Err[E_co]:
         """Async no-op on Err."""
         return self
 
-    async def tap_error_async(
-        self, fn: Callable[[E_co], Awaitable[object]]
-    ) -> Err[E_co]:
+    async def tap_error_async(self, fn: Callable[[E_co], Awaitable[None]]) -> Err[E_co]:
         """Run an async error side effect and return this result."""
 
         async def callback() -> Err[E_co]:
@@ -536,48 +465,9 @@ class Err(Generic[E_co]):  # noqa: UP046
 
         return await _try_or_panic_async(callback, "tap_error_async callback threw")
 
-    @overload
-    def tap_both(self, handlers: TapHandlers[Never, E_co]) -> Err[E_co]: ...
-
-    @overload
-    def tap_both(self, handlers: Handlers[object]) -> Err[E_co]: ...
-
-    def tap_both(
-        self, handlers: TapHandlers[Never, E_co] | Handlers[object]
-    ) -> Err[E_co]:
-        """Run only the ``err`` side effect and return this result."""
-        handler = cast("Callable[[E_co], object]", handlers["err"])
-
-        def callback() -> Err[E_co]:
-            handler(self.error)
-            return self
-
-        return _try_or_panic(callback, "tap_both err callback threw")
-
-    @overload
-    async def tap_both_async(
-        self,
-        handlers: AsyncTapHandlers[Never, E_co],
-    ) -> Err[E_co]: ...
-
-    @overload
-    async def tap_both_async(
-        self,
-        handlers: Handlers[Awaitable[object]],
-    ) -> Err[E_co]: ...
-
-    async def tap_both_async(
-        self,
-        handlers: AsyncTapHandlers[Never, E_co] | Handlers[Awaitable[object]],
-    ) -> Err[E_co]:
-        """Async version of :meth:`tap_both`."""
-        handler = cast("Callable[[E_co], Awaitable[object]]", handlers["err"])
-
-        async def callback() -> Err[E_co]:
-            await handler(self.error)
-            return self
-
-        return await _try_or_panic_async(callback, "tap_both_async err callback threw")
+    def flatten(self) -> Result[Never, E_co]:
+        """Flatten an outer error without invoking any callback."""
+        return self
 
     def __iter__(self) -> Generator[Err[E_co], None, Never]:
         """Yield this Err once, then panic if iteration continues."""
@@ -589,32 +479,13 @@ class Err(Generic[E_co]):  # noqa: UP046
 
 
 type Result[A, E] = Ok[A] | Err[E]
-type AnyResult = Ok[object] | Err[object]
 
 
 def _require_result(value: object, message: str) -> Result[object, object]:
     """Fail fast when a Result callback violates its return contract."""
     if not isinstance(value, (Ok, Err)):
-        raise Panic(message, value)
+        raise PanicError(message, value)
     return cast("Result[object, object]", value)
-
-
-@overload
-def ok() -> Ok[None]: ...
-
-
-@overload
-def ok[A](value: A) -> Ok[A]: ...
-
-
-def ok[A](value: A | None = None) -> Ok[A | None]:
-    """Construct an Ok result; ``ok()`` stores ``None``."""
-    return Ok(value)
-
-
-def err[E](error: E) -> Err[E]:
-    """Construct an Err result."""
-    return Err(error)
 
 
 def is_ok[A, E](result: Result[A, E]) -> TypeGuard[Ok[A]]:
@@ -625,42 +496,3 @@ def is_ok[A, E](result: Result[A, E]) -> TypeGuard[Ok[A]]:
 def is_err[A, E](result: Result[A, E]) -> TypeGuard[Err[E]]:
     """Return whether a result is Err."""
     return isinstance(result, Err)
-
-
-def is_error[A, E](result: Result[A, E]) -> TypeGuard[Err[E]]:
-    """Alias for :func:`is_err` matching the TypeScript status vocabulary."""
-    return is_err(result)
-
-
-def assert_ok(result: object, expected_value: object) -> None:
-    """
-    Assert that a result is Ok and contains the expected value.
-
-    This small helper is useful in tests and mirrors the helper used by the
-    TypeScript port's test suite.
-    """
-    assert isinstance(result, Ok), f"Expected Ok, got {type(result).__name__}"
-    assert result.value == expected_value
-
-
-def assert_err(result: object, expected_error: object) -> None:
-    """Assert that a result is Err and contains the expected error."""
-    assert isinstance(result, Err), f"Expected Err, got {type(result).__name__}"
-    assert result.error == expected_error
-
-
-def assert_panic_raised(
-    fn: Callable[[], object],
-    message_contains: str | None = None,
-) -> Panic:
-    """Call *fn*, assert it raises Panic, and return the Panic."""
-    try:
-        fn()
-    except Panic as panic_error:
-        if message_contains is not None and message_contains not in panic_error.message:
-            assertion_message = (
-                f"Expected {message_contains!r} in {panic_error.message!r}"
-            )
-            raise AssertionError(assertion_message) from None
-        return panic_error
-    raise AssertionError("Expected Panic to be raised")

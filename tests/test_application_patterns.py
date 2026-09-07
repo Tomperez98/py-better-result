@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from typing import assert_type
 
-from better_result.core import Err, Ok, Result, err
-from better_result.error import TaggedError, match_error
+from better_result.core import Err, Ok, Result
+from better_result.error import TaggedError
 
 
-class InvalidPort(TaggedError, tag="InvalidPort"):
+class InvalidPortError(TaggedError, tag="InvalidPort"):
     """The caller supplied a value that is not a valid port."""
 
     input: str
@@ -23,7 +23,7 @@ class InvalidPort(TaggedError, tag="InvalidPort"):
         super().__init__(message="Expected a port from 1 to 65535", input=input_value)
 
 
-class PortUnavailable(TaggedError, tag="PortUnavailable"):
+class PortUnavailableError(TaggedError, tag="PortUnavailable"):
     """The port source could not be reached."""
 
     cause: BaseException
@@ -32,17 +32,17 @@ class PortUnavailable(TaggedError, tag="PortUnavailable"):
         super().__init__(message="Port source unavailable", cause=cause)
 
 
-type LoadPortError = InvalidPort | PortUnavailable
+type LoadPortError = InvalidPortError | PortUnavailableError
 
 
-def parse_port(input_value: str) -> Result[int, InvalidPort]:
+def parse_port(input_value: str) -> Result[int, InvalidPortError]:
     """Parse untrusted input and return a tagged boundary error."""
     try:
         port = int(input_value)
     except ValueError:
-        return err(InvalidPort(input_value))
+        return Err(InvalidPortError(input_value))
     if not 1 <= port <= 65_535:
-        return err(InvalidPort(input_value))
+        return Err(InvalidPortError(input_value))
     return Ok(port)
 
 
@@ -57,7 +57,7 @@ def load_port(
         return Err(parsed.error)
     if source_fails:
         return Err(
-            PortUnavailable(ConnectionError("port source is down")),
+            PortUnavailableError(ConnectionError("port source is down")),
         )
     return Ok(parsed.value)
 
@@ -65,16 +65,16 @@ def load_port(
 def test_application_boundaries_do_not_return_string_errors() -> None:
     invalid = parse_port("not-a-port")
     unavailable = load_port("8080", source_fails=True)
-    assert_type(invalid, Result[int, InvalidPort])
+    assert_type(invalid, Result[int, InvalidPortError])
     assert_type(unavailable, Result[int, LoadPortError])
 
     assert isinstance(invalid, Err)
-    assert isinstance(invalid.error, InvalidPort)
+    assert isinstance(invalid.error, InvalidPortError)
     assert not isinstance(invalid.error, str)
     assert invalid.error.input == "not-a-port"
 
     assert isinstance(unavailable, Err)
-    assert isinstance(unavailable.error, PortUnavailable)
+    assert isinstance(unavailable.error, PortUnavailableError)
     assert not isinstance(unavailable.error, str)
     assert isinstance(unavailable.error.cause, ConnectionError)
 
@@ -91,11 +91,8 @@ def test_tagged_boundary_errors_are_exhaustively_matchable() -> None:
         "PortUnavailable": lambda error: f"unavailable: {error.message}",
     }
 
-    assert match_error(invalid.error, handlers) == "invalid input: nope"
-    assert (
-        match_error(unavailable.error, handlers)
-        == "unavailable: Port source unavailable"
-    )
+    assert invalid.error.match(handlers) == "invalid input: nope"
+    assert unavailable.error.match(handlers) == "unavailable: Port source unavailable"
 
 
 def test_tagged_boundary_errors_preserve_context_when_serialized() -> None:

@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypedDict, cast
 
-from .core import Err, Ok, Panic, Result, panic
-from .error import (
+from better_result.core import Err, Ok, PanicError, Result, panic
+from better_result.error import (
     ResultCodecIssue,
     ResultDeserializationError,
     ResultSerializationError,
@@ -31,14 +31,12 @@ class SchemaFailure:
 
 
 class Schema[T, U](Protocol):
-    """A Standard-Schema-like validator for Python boundaries."""
+    """A synchronous validator for a Result boundary."""
 
-    def validate(
-        self,
-        value: T,
-    ) -> U | SchemaFailure | Awaitable[U | SchemaFailure]: ...
+    def validate(self, value: T) -> U | SchemaFailure: ...
 
 
+type SyncSchemaLike[T, U] = Schema[T, U] | Callable[[T], U | SchemaFailure]
 type SchemaLike[T, U] = (
     Schema[T, U] | Callable[[T], U | SchemaFailure | Awaitable[U | SchemaFailure]]
 )
@@ -108,13 +106,19 @@ def _run_validation[T, U, E](
     value: T,
     make_error: Callable[[T, Sequence[ResultCodecIssue]], E],
     panic_message: str,
+    *,
+    allow_async: bool = True,
 ) -> Result[U, E] | Awaitable[Result[U, E]]:
     try:
         validation = _validate(schema, value)
-    except Panic:
+    except PanicError:
         raise
     except Exception as cause:
         panic(panic_message, cause)
+
+    if not allow_async and inspect.isawaitable(validation):
+        cast("Coroutine[None, None, U | SchemaFailure]", validation).close()
+        panic("ResultCodec received an async schema; use async_codec")
 
     if inspect.isawaitable(validation):
 
@@ -123,7 +127,7 @@ def _run_validation[T, U, E](
                 resolved = await validation
             except asyncio.CancelledError:
                 raise
-            except Panic:
+            except PanicError:
                 raise
             except Exception as cause:
                 panic(panic_message, cause)
@@ -152,8 +156,8 @@ def _is_envelope(value: object) -> bool:
     return isinstance(value, Mapping) and value.get("status") in {"ok", "error"}
 
 
-class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
-    """Encode and decode Result envelopes at a validated boundary."""
+class _CodecBase[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
+    """Shared implementation for synchronous and asynchronous codecs."""
 
     def __init__(
         self,
@@ -168,9 +172,11 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
     ) -> None:
         self._config = config
 
-    def serialize(
+    def _serialize(
         self,
         result: Result[OkInput, ErrInput],
+        *,
+        allow_async: bool = True,
     ) -> (
         Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]
         | Awaitable[Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]]
@@ -181,6 +187,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
                 result.value,
                 ResultSerializationError,
                 "Result.codec serialize schema threw",
+                allow_async=allow_async,
             )
 
             def finish_ok(
@@ -203,6 +210,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             result.error,
             ResultSerializationError,
             "Result.codec serialize schema threw",
+            allow_async=allow_async,
         )
 
         def finish_err(
@@ -222,25 +230,11 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
 
         return _map_operation(operation, finish_err)
 
-    async def serialize_async(
-        self,
-        result: Result[OkInput, ErrInput],
-    ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
-        """
-        Await serialization for synchronous or asynchronous schemas.
-
-        Use this method whenever a configured schema may be asynchronous.
-        The synchronous :meth:`serialize` method returns an awaitable in that
-        configuration.
-        """
-        return cast(
-            "Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]",
-            await _await_operation(self.serialize(result)),
-        )
-
-    def deserialize(
+    def _deserialize(
         self,
         value: object,
+        *,
+        allow_async: bool = True,
     ) -> (
         Result[OkOutput, ErrOutput | ResultDeserializationError]
         | Awaitable[Result[OkOutput, ErrOutput | ResultDeserializationError]]
@@ -256,6 +250,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
                 cast("OkWire", value.get("value")),
                 ResultDeserializationError,
                 "Result.codec deserialize schema threw",
+                allow_async=allow_async,
             )
 
             def finish_ok(
@@ -276,6 +271,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             cast("ErrWire", value.get("error")),
             ResultDeserializationError,
             "Result.codec deserialize schema threw",
+            allow_async=allow_async,
         )
 
         def finish_err(
@@ -289,56 +285,53 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
 
         return _map_operation(operation, finish_err)
 
-    async def deserialize_async(
+
+class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
+    _CodecBase[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput],
+):
+    """Encode and decode Result envelopes with synchronous schemas."""
+
+    def serialize(
+        self,
+        result: Result[OkInput, ErrInput],
+    ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
+        return cast(
+            "Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]",
+            self._serialize(result, allow_async=False),
+        )
+
+    def deserialize(
         self,
         value: object,
     ) -> Result[OkOutput, ErrOutput | ResultDeserializationError]:
-        """
-        Await deserialization for synchronous or asynchronous schemas.
-
-        Use this method whenever a configured schema may be asynchronous.
-        The synchronous :meth:`deserialize` method returns an awaitable in
-        that configuration.
-        """
         return cast(
             "Result[OkOutput, ErrOutput | ResultDeserializationError]",
-            await _await_operation(self.deserialize(value)),
+            self._deserialize(value, allow_async=False),
         )
 
-    def serialize_unsafe(
+
+class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
+    _CodecBase[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput],
+):
+    """Encode and decode Result envelopes with sync or async schemas."""
+
+    async def serialize(
         self,
         result: Result[OkInput, ErrInput],
-    ) -> (
-        SerializedResult[OkWire, ErrWire] | Awaitable[SerializedResult[OkWire, ErrWire]]
-    ):
-        operation = self.serialize(result)
+    ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
+        return cast(
+            "Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]",
+            await _await_operation(self._serialize(result)),
+        )
 
-        def unwrap_serialized(
-            resolved: Result[
-                SerializedResult[OkWire, ErrWire],
-                ResultSerializationError,
-            ],
-        ) -> SerializedResult[OkWire, ErrWire]:
-            return resolved.unwrap("Result.codec serialize_unsafe failed")
-
-        return _map_operation(operation, unwrap_serialized)
-
-    def deserialize_unsafe(
+    async def deserialize(
         self,
         value: object,
-    ) -> Result[OkOutput, ErrOutput] | Awaitable[Result[OkOutput, ErrOutput]]:
-        operation = self.deserialize(value)
-
-        def preserve_domain_result(
-            resolved: Result[OkOutput, ErrOutput | ResultDeserializationError],
-        ) -> Result[OkOutput, ErrOutput]:
-            if isinstance(resolved, Ok):
-                return Ok(resolved.value)
-            if isinstance(resolved.error, ResultDeserializationError):
-                return resolved.unwrap("Result.codec deserialize_unsafe failed")
-            return Err(resolved.error)
-
-        return _map_operation(operation, preserve_domain_result)
+    ) -> Result[OkOutput, ErrOutput | ResultDeserializationError]:
+        return cast(
+            "Result[OkOutput, ErrOutput | ResultDeserializationError]",
+            await _await_operation(self._deserialize(value)),
+        )
 
 
 def _map_operation[T, U, E](
@@ -354,14 +347,13 @@ def _map_operation[T, U, E](
     return transform(operation)
 
 
-def codec_config[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
+def _codec_config[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
     *,
     serialize_ok: SchemaLike[OkInput, OkWire],
     serialize_err: SchemaLike[ErrInput, ErrWire],
     deserialize_ok: SchemaLike[OkWire, OkOutput],
     deserialize_err: SchemaLike[ErrWire, ErrOutput],
 ) -> ResultCodecConfig[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
-    """Build an inferred codec configuration without generic annotations."""
     return {
         "serialize": {"ok": serialize_ok, "err": serialize_err},
         "deserialize": {"ok": deserialize_ok, "err": deserialize_err},
@@ -369,7 +361,36 @@ def codec_config[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
 
 
 def codec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
-    config: ResultCodecConfig[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput],
+    *,
+    serialize_ok: SyncSchemaLike[OkInput, OkWire],
+    serialize_err: SyncSchemaLike[ErrInput, ErrWire],
+    deserialize_ok: SyncSchemaLike[OkWire, OkOutput],
+    deserialize_err: SyncSchemaLike[ErrWire, ErrOutput],
 ) -> ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
-    """Build a codec from four synchronous or asynchronous schemas."""
-    return ResultCodec(config)
+    """Build a codec with synchronous schemas."""
+    return ResultCodec(
+        _codec_config(
+            serialize_ok=serialize_ok,
+            serialize_err=serialize_err,
+            deserialize_ok=deserialize_ok,
+            deserialize_err=deserialize_err,
+        ),
+    )
+
+
+def async_codec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
+    *,
+    serialize_ok: SchemaLike[OkInput, OkWire],
+    serialize_err: SchemaLike[ErrInput, ErrWire],
+    deserialize_ok: SchemaLike[OkWire, OkOutput],
+    deserialize_err: SchemaLike[ErrWire, ErrOutput],
+) -> AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
+    """Build a codec with synchronous or asynchronous schemas."""
+    return AsyncResultCodec(
+        _codec_config(
+            serialize_ok=serialize_ok,
+            serialize_err=serialize_err,
+            deserialize_ok=deserialize_ok,
+            deserialize_err=deserialize_err,
+        ),
+    )

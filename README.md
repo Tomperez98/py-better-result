@@ -13,17 +13,17 @@ The package requires Python 3.12 or newer.
 ## Basic results
 
 ```python
-from better_result import Err, Ok, Result, err, ok
+from better_result.core import Err, Ok, Result
 
 
 def parse_port(raw: str) -> Result[int, str]:
     try:
         port = int(raw)
     except ValueError:
-        return err("port is not an integer")
+        return Err("port is not an integer")
     if not 1 <= port <= 65_535:
-        return err("port is out of range")
-    return ok(port)
+        return Err("port is out of range")
+    return Ok(port)
 
 
 result = parse_port("8080")
@@ -44,24 +44,25 @@ The package follows one failure rule:
 ## Composition
 
 ```python
-from better_result import and_then, map_result, unwrap_or
+from better_result.core import Ok
 
 result = (
     parse_port("8080")
     .map(lambda port: port + 1)
-    .and_then(lambda port: ok(f"port:{port}"))
+    .and_then(lambda port: Ok(f"port:{port}"))
 )
 
-label = unwrap_or(result, "unavailable")
+label = result.unwrap_or("unavailable")
 ```
 
-Most utilities support both data-first and data-last forms:
+Result transformations and observations use instance methods. Branch matching
+always receives both explicit callbacks:
 
 ```python
-from better_result import map_result, ok
-
-add_prefix = map_result(lambda value: f"port:{value}")
-result = add_prefix(ok(8080))
+message = result.match(
+    lambda value: f"port:{value}",
+    lambda error: f"unavailable: {error}",
+)
 ```
 
 `and_then` and `try_recover` callbacks must return a `Result`; returning another value raises `Panic` immediately.
@@ -71,7 +72,8 @@ result = add_prefix(ok(8080))
 Use tagged errors for stable application error vocabularies:
 
 ```python
-from better_result import TaggedError, err, match_error
+from better_result.core import Err
+from better_result.error import TaggedError
 
 
 class InvalidPort(TaggedError, tag="InvalidPort"):
@@ -79,9 +81,8 @@ class InvalidPort(TaggedError, tag="InvalidPort"):
         super().__init__(message="invalid port", raw=raw)
 
 
-failure = err(InvalidPort("abc"))
-message = match_error(
-    failure.error,
+failure = Err(InvalidPort("abc"))
+message = failure.error.match(
     {"InvalidPort": lambda error: f"bad input: {error.raw}"},
 )
 ```
@@ -90,31 +91,32 @@ message = match_error(
 
 ## Async workflows
 
-Use the async combinators with coroutines. `asyncio.CancelledError` propagates normally:
+Use the async instance methods with coroutines. `asyncio.CancelledError`
+propagates normally:
 
 ```python
-from better_result import and_then_async, ok
+from better_result.core import Ok
 
 
 async def load_user(user_id: int):
-    return ok({"id": user_id})
+    return Ok({"id": user_id})
 
 
 async def load_name(user: dict[str, int]):
-    return ok(str(user["id"]))
+    return Ok(str(user["id"]))
 
 
 async def workflow():
-    result = await and_then_async(ok(42), load_user)
-    return await and_then_async(result, load_name)
+    result = await Ok(42).and_then_async(load_user)
+    return await result.and_then_async(load_name)
 ```
 
-`all_async()` preserves input order and cancels unfinished sibling operations when an input rejects. `partition_async()` waits for all inputs and returns `(success_values, error_values)`.
+`all_results_async()` preserves input order and cancels unfinished sibling operations when an input rejects. `partition_async()` waits for all inputs and returns `(success_values, error_values)`.
 
 ## Retries
 
 ```python
-from better_result import AsyncRetryConfig, try_async
+from better_result.retry import AsyncRetryConfig, try_async
 
 
 async def operation(context): ...
@@ -133,22 +135,21 @@ Retry delays must be finite and non-negative. Delay callbacks may return a numbe
 Codecs validate Result payloads at serialization boundaries:
 
 ```python
-from better_result import codec, codec_config, ok
+from better_result.codec import codec
+from better_result.core import Ok
 
 result_codec = codec(
-    codec_config(
-        serialize_ok=str,
-        serialize_err=str,
-        deserialize_ok=int,
-        deserialize_err=str,
-    ),
+    serialize_ok=str,
+    serialize_err=str,
+    deserialize_ok=int,
+    deserialize_err=str,
 )
 
-encoded = result_codec.serialize(ok(42))
+encoded = result_codec.serialize(Ok(42))
 assert encoded.value == {"status": "ok", "value": "42"}
 ```
 
-Synchronous schemas return a `Result` directly. If a schema is asynchronous, use `serialize_async()` or `deserialize_async()`; the synchronous methods return an awaitable in that configuration.
+`codec()` is for synchronous schemas and returns `Result` values directly. Use `async_codec()` when a schema is asynchronous; its `serialize()` and `deserialize()` methods are awaitable.
 
 ## Development
 

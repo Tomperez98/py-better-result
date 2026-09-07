@@ -7,11 +7,11 @@ from typing import assert_type
 
 import pytest
 
-from better_result.core import Err, Ok, Result, err
+from better_result.core import Err, Ok, Result
 from better_result.error import TaggedError
 
 
-class InvalidAmount(TaggedError, tag="InvalidAmount"):
+class InvalidAmountError(TaggedError, tag="InvalidAmount"):
     """The checkout amount is not valid."""
 
     input: str
@@ -20,7 +20,7 @@ class InvalidAmount(TaggedError, tag="InvalidAmount"):
         super().__init__(message="Amount must be a positive integer", input=input_value)
 
 
-class InsufficientFunds(TaggedError, tag="InsufficientFunds"):
+class InsufficientFundsError(TaggedError, tag="InsufficientFunds"):
     """The account cannot cover the checkout amount."""
 
     requested: int
@@ -34,7 +34,7 @@ class InsufficientFunds(TaggedError, tag="InsufficientFunds"):
         )
 
 
-class GatewayUnavailable(TaggedError, tag="GatewayUnavailable"):
+class GatewayUnavailableError(TaggedError, tag="GatewayUnavailable"):
     """The selected payment gateway is unavailable."""
 
     channel: str
@@ -49,16 +49,18 @@ class Receipt:
     channel: str
 
 
-type CheckoutError = InvalidAmount | InsufficientFunds | GatewayUnavailable
+type CheckoutError = (
+    InvalidAmountError | InsufficientFundsError | GatewayUnavailableError
+)
 
 
-def parse_amount(raw: str) -> Result[int, InvalidAmount]:
+def parse_amount(raw: str) -> Result[int, InvalidAmountError]:
     try:
         amount = int(raw)
     except ValueError:
-        return err(InvalidAmount(raw))
+        return Err(InvalidAmountError(raw))
     if amount <= 0:
-        return err(InvalidAmount(raw))
+        return Err(InvalidAmountError(raw))
     return Ok(amount)
 
 
@@ -72,17 +74,17 @@ def checkout(
     """Compose parsing, authorization, routing, and charging with and_then."""
     events = trace if trace is not None else []
 
-    def authorize(amount: int) -> Result[int, InsufficientFunds]:
+    def authorize(amount: int) -> Result[int, InsufficientFundsError]:
         events.append("authorize")
         if amount > balance:
-            return Err(InsufficientFunds(amount, balance))
+            return Err(InsufficientFundsError(amount, balance))
         return Ok(amount)
 
-    def charge(amount: int) -> Result[Receipt, GatewayUnavailable]:
+    def charge(amount: int) -> Result[Receipt, GatewayUnavailableError]:
         channel = "card" if amount <= 100 else "bank"
         events.append(f"charge:{channel}")
         if not gateway_available:
-            return Err(GatewayUnavailable(channel))
+            return Err(GatewayUnavailableError(channel))
         return Ok(Receipt(amount, channel))
 
     return parse_amount(raw_amount).and_then(authorize).and_then(charge)
@@ -102,20 +104,20 @@ async def checkout_async(
     async def authorize(amount: int) -> Result[int, CheckoutError]:
         events.append("authorize")
         if amount > balance:
-            return Err(InsufficientFunds(amount, balance))
+            return Err(InsufficientFundsError(amount, balance))
         return Ok(amount)
 
     async def charge(amount: int) -> Result[Receipt, CheckoutError]:
         channel = "card" if amount <= 100 else "bank"
         events.append(f"charge:{channel}")
         if not gateway_available:
-            return Err(GatewayUnavailable(channel))
+            return Err(GatewayUnavailableError(channel))
         return Ok(Receipt(amount, channel))
 
     authorized = await parsed.and_then_async(authorize)
-    assert_type(authorized, Result[int, InvalidAmount | CheckoutError])
+    assert_type(authorized, Result[int, InvalidAmountError | CheckoutError])
     charged = await authorized.and_then_async(charge)
-    assert_type(charged, Result[Receipt, InvalidAmount | CheckoutError])
+    assert_type(charged, Result[Receipt, InvalidAmountError | CheckoutError])
     return charged
 
 
@@ -139,48 +141,54 @@ def test_and_then_short_circuits_each_expected_error() -> None:
     invalid_trace: list[str] = []
     invalid = checkout("not-an-amount", 500, trace=invalid_trace)
     assert isinstance(invalid, Err)
-    assert isinstance(invalid.error, InvalidAmount)
+    assert isinstance(invalid.error, InvalidAmountError)
     assert invalid_trace == []
 
     funds_trace: list[str] = []
     funds = checkout("250", 100, trace=funds_trace)
     assert isinstance(funds, Err)
-    assert isinstance(funds.error, InsufficientFunds)
+    assert isinstance(funds.error, InsufficientFundsError)
     assert funds_trace == ["authorize"]
 
     gateway_trace: list[str] = []
     gateway = checkout("250", 500, gateway_available=False, trace=gateway_trace)
     assert isinstance(gateway, Err)
-    assert isinstance(gateway.error, GatewayUnavailable)
+    assert isinstance(gateway.error, GatewayUnavailableError)
     assert gateway.error.channel == "bank"
     assert gateway_trace == ["authorize", "charge:bank"]
 
 
 @pytest.mark.asyncio
 async def test_and_then_async_preserves_the_full_error_union() -> None:
-    async def authorize(amount: int) -> Result[int, InsufficientFunds]:
+    async def authorize(amount: int) -> Result[int, InsufficientFundsError]:
         return Ok(amount)
 
-    async def charge(amount: int) -> Result[Receipt, GatewayUnavailable]:
+    async def charge(amount: int) -> Result[Receipt, GatewayUnavailableError]:
         return Ok(Receipt(amount, "card"))
 
     async def authorize_chain(
-        result: Result[int, InvalidAmount],
-    ) -> Result[int, InvalidAmount | InsufficientFunds]:
+        result: Result[int, InvalidAmountError],
+    ) -> Result[int, InvalidAmountError | InsufficientFundsError]:
         return await result.and_then_async(authorize)
 
     async def charge_chain(
-        result: Result[int, InvalidAmount | InsufficientFunds],
-    ) -> Result[Receipt, InvalidAmount | InsufficientFunds | GatewayUnavailable]:
+        result: Result[int, InvalidAmountError | InsufficientFundsError],
+    ) -> Result[
+        Receipt,
+        InvalidAmountError | InsufficientFundsError | GatewayUnavailableError,
+    ]:
         return await result.and_then_async(charge)
 
-    initial: Result[int, InvalidAmount] = Ok(5)
+    initial: Result[int, InvalidAmountError] = Ok(5)
     authorized = await authorize_chain(initial)
-    assert_type(authorized, Result[int, InvalidAmount | InsufficientFunds])
+    assert_type(authorized, Result[int, InvalidAmountError | InsufficientFundsError])
     charged = await charge_chain(authorized)
     assert_type(
         charged,
-        Result[Receipt, InvalidAmount | InsufficientFunds | GatewayUnavailable],
+        Result[
+            Receipt,
+            InvalidAmountError | InsufficientFundsError | GatewayUnavailableError,
+        ],
     )
     assert isinstance(charged, Ok)
     assert charged.value == Receipt(5, "card")
@@ -197,5 +205,5 @@ async def test_and_then_async_composes_and_short_circuits_the_same_workflow() ->
     failed_trace: list[str] = []
     failed = await checkout_async("250", 100, trace=failed_trace)
     assert isinstance(failed, Err)
-    assert isinstance(failed.error, InsufficientFunds)
+    assert isinstance(failed.error, InsufficientFundsError)
     assert failed_trace == ["authorize"]

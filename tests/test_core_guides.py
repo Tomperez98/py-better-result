@@ -6,13 +6,12 @@ from typing import assert_type
 
 import pytest
 
-from better_result.combinators import and_then, map_error, match, try_recover
-from better_result.core import Err, Ok, Panic, Result, err, is_err, is_error, is_ok, ok
-from better_result.error import TaggedError, UnhandledException
+from better_result.core import Err, Ok, PanicError, Result, is_err, is_ok
+from better_result.error import TaggedError, UnhandledError
 from better_result.retry import try_async
 
 
-class ParseFailed(TaggedError, tag="ParseFailed"):
+class ParseFailedError(TaggedError, tag="ParseFailed"):
     """The input could not be parsed."""
 
     input: str
@@ -21,7 +20,7 @@ class ParseFailed(TaggedError, tag="ParseFailed"):
         super().__init__(message="Could not parse input", input=input_value)
 
 
-class ValidationFailed(TaggedError, tag="ValidationFailed"):
+class ValidationFailedError(TaggedError, tag="ValidationFailed"):
     """The parsed value failed validation."""
 
     value: int
@@ -30,7 +29,7 @@ class ValidationFailed(TaggedError, tag="ValidationFailed"):
         super().__init__(message="Value is invalid", value=value)
 
 
-class SaveFailed(TaggedError, tag="SaveFailed"):
+class SaveFailedError(TaggedError, tag="SaveFailed"):
     """The validated value could not be saved."""
 
     def __init__(self) -> None:
@@ -45,117 +44,105 @@ async def test_try_async_without_catch_returns_unhandled_exception() -> None:
         raise original
 
     result = await try_async(operation)
-    assert_type(result, Result[int, UnhandledException])
+    assert_type(result, Result[int, UnhandledError])
     assert isinstance(result, Err)
-    assert isinstance(result.error, UnhandledException)
+    assert isinstance(result.error, UnhandledError)
     assert result.error.cause is original
 
 
-def test_narrowing_and_matching_support_both_forms() -> None:
-    success: Result[int, ParseFailed] = Ok(3)
-    failure: Result[int, ParseFailed] = err(ParseFailed("bad"))
+def test_narrowing_and_matching_use_both_callbacks() -> None:
+    success: Result[int, ParseFailedError] = Ok(3)
+    failure: Result[int, ParseFailedError] = Err(ParseFailedError("bad"))
 
-    assert success.status == "ok"
     assert success.value == 3
-    assert failure.status == "error"
-    assert isinstance(failure.error, ParseFailed)
+    assert isinstance(failure.error, ParseFailedError)
 
     assert is_ok(success)
     assert not is_err(success)
-    assert not is_error(success)
     assert not is_ok(failure)
     assert is_err(failure)
-    assert is_error(failure)
-    assert success.is_ok()
-    assert not success.is_err()
-    assert failure.is_err()
-    assert not failure.is_ok()
 
-    handlers = {
-        "ok": lambda value: f"value={value}",
-        "err": lambda error: f"error={error.input}",
-    }
-    assert match(success, handlers) == "value=3"
-    assert match(handlers)(failure) == "error=bad"
-    assert success.match(handlers) == "value=3"
-    assert failure.match(handlers) == "error=bad"
+    def on_ok(value: int) -> str:
+        return f"value={value}"
+
+    def on_err(error: ParseFailedError) -> str:
+        return f"error={error.input}"
+
+    assert success.match(on_ok, on_err) == "value=3"
+    assert failure.match(on_ok, on_err) == "error=bad"
 
 
 def test_map_nests_results_but_and_then_flattens_them() -> None:
-    nested = ok(2).map(lambda value: ok(value * 3))
+    nested = Ok(2).map(lambda value: Ok(value * 3))
     assert isinstance(nested, Ok)
     assert isinstance(nested.value, Ok)
     assert nested.value.value == 6
 
-    def validate(value: int) -> Result[str, ValidationFailed]:
+    def validate(value: int) -> Result[str, ValidationFailedError]:
         if value <= 0:
-            return err(ValidationFailed(value))
+            return Err(ValidationFailedError(value))
         return Ok(f"valid:{value}")
 
     def chain(
-        result: Result[int, ParseFailed],
-    ) -> Result[str, ParseFailed | ValidationFailed]:
+        result: Result[int, ParseFailedError],
+    ) -> Result[str, ParseFailedError | ValidationFailedError]:
         return result.and_then(validate)
 
-    initial: Result[int, ParseFailed] = Ok(2)
+    initial: Result[int, ParseFailedError] = Ok(2)
     chained = chain(initial)
-    assert_type(chained, Result[str, ParseFailed | ValidationFailed])
+    assert_type(chained, Result[str, ParseFailedError | ValidationFailedError])
     assert isinstance(chained, Ok)
     assert chained.value == "valid:2"
 
-    rejected = and_then(Ok(0), validate)
+    rejected = Ok(0).and_then(validate)
     assert isinstance(rejected, Err)
-    assert isinstance(rejected.error, ValidationFailed)
+    assert isinstance(rejected.error, ValidationFailedError)
 
     called = False
 
-    def should_not_run(_value: int) -> Result[str, ValidationFailed]:
+    def should_not_run(_value: int) -> Result[str, ValidationFailedError]:
         nonlocal called
         called = True
         return Ok("unexpected")
 
-    short_circuited = and_then(
-        Err(ParseFailed("bad")),
-        should_not_run,
-    )
+    short_circuited = Err(ParseFailedError("bad")).and_then(should_not_run)
     assert isinstance(short_circuited, Err)
-    assert isinstance(short_circuited.error, ParseFailed)
+    assert isinstance(short_circuited.error, ParseFailedError)
     assert not called
 
 
 def test_map_error_translates_only_errors_and_recovery_returns_results() -> None:
-    failure: Result[int, ParseFailed] = Err(ParseFailed("bad"))
+    failure: Result[int, ParseFailedError] = Err(ParseFailedError("bad"))
 
-    def translate(error: ParseFailed) -> ValidationFailed:
-        return ValidationFailed(len(error.input))
+    def translate(error: ParseFailedError) -> ValidationFailedError:
+        return ValidationFailedError(len(error.input))
 
-    translated = map_error(failure, translate)
+    translated = failure.map_error(translate)
 
     assert isinstance(translated, Err)
-    assert isinstance(translated.error, ValidationFailed)
+    assert isinstance(translated.error, ValidationFailedError)
     assert translated.error.value == 3
 
-    success: Result[int, ParseFailed] = Ok(7)
-    mapped_success = map_error(success, lambda _error: ValidationFailed(0))
+    success: Result[int, ParseFailedError] = Ok(7)
+    mapped_success = success.map_error(lambda _error: ValidationFailedError(0))
     assert mapped_success is success
 
-    def recover(_error: ParseFailed) -> Result[int, SaveFailed]:
+    def recover(_error: ParseFailedError) -> Result[int, SaveFailedError]:
         return Ok(99)
 
-    def recover_result(result: Result[int, ParseFailed]) -> Result[int, SaveFailed]:
+    def recover_result(
+        result: Result[int, ParseFailedError],
+    ) -> Result[int, SaveFailedError]:
         return result.try_recover(recover)
 
     recovered = recover_result(failure)
-    assert_type(recovered, Result[int, SaveFailed])
+    assert_type(recovered, Result[int, SaveFailedError])
     assert isinstance(recovered, Ok)
     assert recovered.value == 99
 
-    untouched = try_recover(
-        Ok(7),
-        lambda _error: Err(SaveFailed()),
-    )
+    untouched = Ok(7).try_recover(lambda _error: Err(SaveFailedError()))
     assert isinstance(untouched, Ok)
     assert untouched.value == 7
 
-    with pytest.raises(Panic, match="try_recover callback threw"):
+    with pytest.raises(PanicError, match="try_recover callback threw"):
         failure.try_recover(lambda _error: (_ for _ in ()).throw(RuntimeError("bug")))

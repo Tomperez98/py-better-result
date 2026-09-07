@@ -3,20 +3,17 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from typing import assert_type, cast
+from typing import cast
 
 import pytest
 
-from better_result.core import Err, Panic, err
+from better_result.core import Err, PanicError
 from better_result.error import (
     ResultDeserializationError,
     ResultSerializationError,
     TaggedError,
-    UnhandledException,
+    UnhandledError,
     is_tagged_error,
-    match_error,
-    match_error_partial,
     tagged_error,
 )
 
@@ -32,7 +29,7 @@ class ValidationError(TaggedError, tag="ValidationError"):
 
 
 def test_tagged_error_supports_computed_messages_causes_and_reserved_names() -> None:
-    class RequestFailed(TaggedError, tag="RequestFailed"):
+    class RequestFailedError(TaggedError, tag="RequestFailed"):
         url: str
         status_code: int
 
@@ -44,7 +41,7 @@ def test_tagged_error_supports_computed_messages_causes_and_reserved_names() -> 
             )
 
     cause = ValueError("timeout")
-    error = RequestFailed("https://example.test", 503)
+    error = RequestFailedError("https://example.test", 503)
     with_cause = TaggedError(cause=cause, message="failed")
 
     assert error.name == "RequestFailed"
@@ -57,7 +54,7 @@ def test_tagged_error_supports_computed_messages_causes_and_reserved_names() -> 
     assert cause_json["message"] == "timeout"
 
     with pytest.raises(TypeError, match="reserved"):
-        TaggedError({"match": "shadowing the method"})
+        TaggedError(match="shadowing the method")
 
 
 def test_tagged_error_preserves_properties_and_serializes() -> None:
@@ -70,7 +67,6 @@ def test_tagged_error_preserves_properties_and_serializes() -> None:
     assert error.to_json()["_tag"] == "NotFoundError"
     assert error.to_json()["item_id"] == "123"
     assert is_tagged_error(error)
-    assert TaggedError.is_tagged_error(error)
     assert NotFoundError.is_(error)
     assert not NotFoundError.is_(ValidationError("email"))
     assert not is_tagged_error(ValueError("plain"))
@@ -82,13 +78,13 @@ def test_tagged_error_requires_a_class_header_tag() -> None:
 
     with pytest.raises(ValueError, match="must not be empty"):
 
-        class EmptyTag(TaggedError, tag=""):
+        class EmptyTagError(TaggedError, tag=""):
             pass
 
 
 def test_dynamic_tagged_error_factory() -> None:
     dynamic_error = tagged_error("DynamicError")
-    error = dynamic_error({"message": "dynamic", "value": 42})
+    error = dynamic_error(message="dynamic", value=42)
 
     assert error._tag == "DynamicError"
     assert error.message == "dynamic"
@@ -96,7 +92,7 @@ def test_dynamic_tagged_error_factory() -> None:
     assert dynamic_error.is_(error)
 
 
-def test_match_error_supports_data_first_and_data_last_forms() -> None:
+def test_tagged_error_match_dispatches_exhaustively() -> None:
     handlers = {
         "NotFoundError": lambda error: f"missing {error.item_id}",
         "ValidationError": lambda error: f"invalid {error.field}",
@@ -104,76 +100,63 @@ def test_match_error_supports_data_first_and_data_last_forms() -> None:
     not_found = NotFoundError("123")
     validation = ValidationError("email")
 
-    assert match_error(not_found, handlers) == "missing 123"
-    matcher = match_error(handlers)
-    assert_type(matcher, Callable[[TaggedError], str])
-    assert matcher(validation) == "invalid email"
+    assert not_found.match(handlers) == "missing 123"
+    assert validation.match(handlers) == "invalid email"
 
 
-def test_match_error_rejects_missing_handlers_as_panics() -> None:
-    with pytest.raises(Panic, match="match_error handler threw"):
-        match_error(NotFoundError("123"), {"ValidationError": lambda _: "wrong"})
+def test_tagged_error_match_rejects_missing_handlers_as_panics() -> None:
+    with pytest.raises(PanicError, match=r"TaggedError\.match handler threw"):
+        NotFoundError("123").match(
+            {"ValidationError": lambda _: "wrong"},
+        )
 
 
-def test_match_error_wraps_handler_failures_in_panic() -> None:
+def test_tagged_error_match_wraps_handler_failures_in_panic() -> None:
     error = NotFoundError("123")
 
-    with pytest.raises(Panic, match="match_error handler threw") as raised:
-        match_error(error, {"NotFoundError": lambda _: (_ for _ in ()).throw(error)})
+    with pytest.raises(PanicError, match=r"TaggedError\.match handler threw") as raised:
+        error.match({"NotFoundError": lambda _: (_ for _ in ()).throw(error)})
 
     assert raised.value.cause is error
 
 
-def test_match_error_partial_preserves_or_transforms_unhandled_errors() -> None:
+def test_tagged_error_match_partial_preserves_or_transforms_unhandled_errors() -> None:
     handled = NotFoundError("123")
     unhandled = ValidationError("email")
     handlers = {"NotFoundError": lambda error: str(error.item_id)}
 
-    assert match_error_partial(handled, handlers) == "123"
-    assert match_error_partial(unhandled, handlers) is unhandled
+    assert handled.match_partial(handlers) == "123"
+    assert unhandled.match_partial(handlers) is unhandled
     assert (
-        match_error_partial(
-            unhandled,
+        unhandled.match_partial(
             handlers,
             lambda error: f"fallback: {error._tag}",
         )
         == "fallback: ValidationError"
     )
 
-    matcher = match_error_partial(handlers)
-    assert_type(matcher, Callable[[TaggedError], str | TaggedError])
-    assert matcher(handled) == "123"
-    assert matcher(unhandled) is unhandled
-
-    matcher_with_fallback = match_error_partial(
-        handlers,
-        lambda error: f"fallback: {error._tag}",
-    )
-    assert_type(matcher_with_fallback, Callable[[TaggedError], str])
-    assert matcher_with_fallback(unhandled) == "fallback: ValidationError"
-
 
 def test_partial_match_callback_defects_are_panics() -> None:
-    def explode(_error: NotFoundError) -> int:
-        raise RuntimeError("broken handler")
+    def explode(_error: TaggedError) -> int:
+        msg = "broken handler"
+        raise RuntimeError(msg)
 
-    with pytest.raises(Panic, match="match_error_partial handler threw"):
-        match_error_partial(NotFoundError("123"), {"NotFoundError": explode})
+    with pytest.raises(PanicError, match=r"TaggedError\.match_partial handler threw"):
+        NotFoundError("123").match_partial({"NotFoundError": explode})
 
 
-def test_match_error_partial_can_wrap_unhandled_errors_as_err() -> None:
+def test_tagged_error_match_partial_can_wrap_unhandled_errors_as_result() -> None:
     error = ValidationError("email")
-    matcher = match_error_partial(
-        {"NotFoundError": lambda selected: str(selected.item_id)},
-        err,
+    result = error.match_partial(
+        {"NotFoundError": lambda selected: str(selected.to_dict()["item_id"])},
+        Err,
     )
 
-    result = matcher(error)
     assert isinstance(result, Err)
     assert result.error is error
 
 
-def test_match_error_partial_preserves_falsey_fallback_callables() -> None:
+def test_tagged_error_match_partial_preserves_falsey_fallback_callables() -> None:
     error = ValidationError("email")
     calls: list[str] = []
 
@@ -185,7 +168,7 @@ def test_match_error_partial_preserves_falsey_fallback_callables() -> None:
             calls.append(selected._tag)
             return "handled"
 
-    result = match_error_partial(error, {}, FalseyFallback())
+    result = error.match_partial({}, FalseyFallback())
 
     assert result == "handled"
     assert calls == ["ValidationError"]
@@ -203,7 +186,7 @@ def test_safe_error_serialization_omits_diagnostic_stack() -> None:
 
 def test_builtin_tagged_errors_keep_their_values() -> None:
     cause = ValueError("bad input")
-    unhandled = UnhandledException(cause)
+    unhandled = UnhandledError(cause)
     deserialization = ResultDeserializationError({"raw": "bad"})
     serialization = ResultSerializationError({"raw": object()})
 
@@ -221,7 +204,7 @@ def test_tagged_errors_are_yieldable_as_result_errors() -> None:
 
     assert isinstance(yielded, Err)
     assert yielded.error._tag == "NotFoundError"
-    with pytest.raises(Panic, match="Unreachable"):
+    with pytest.raises(PanicError, match="Unreachable"):
         next(iterator)
 
 

@@ -3,19 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Never, cast
+from typing import Never
 
 import pytest
 
 from better_result.collections import all_results_async, partition_async
-from better_result.combinators import (
-    and_then_async,
-    tap_async,
-    tap_both_async,
-    tap_error_async,
-    try_recover_async,
-)
-from better_result.core import Err, Ok, Panic, Result, err, ok
+from better_result.core import Err, Ok, PanicError, Result
 from better_result.retry import AsyncRetryConfig, TryAsyncContext, try_async
 
 
@@ -26,7 +19,8 @@ async def test_try_async_retries_with_context_and_custom_catch() -> None:
     async def operation(context: TryAsyncContext) -> int:
         attempts.append(context.attempt)
         if context.attempt < 3:
-            raise ValueError("not ready")
+            msg = "not ready"
+            raise ValueError(msg)
         return 42
 
     result = await try_async(
@@ -46,7 +40,8 @@ async def test_try_async_stops_when_retry_predicate_rejects() -> None:
 
     async def operation(context: TryAsyncContext) -> int:
         attempts.append(context.attempt)
-        raise ValueError("fatal")
+        msg = "fatal"
+        raise ValueError(msg)
 
     result = await try_async(
         operation,
@@ -65,90 +60,86 @@ async def test_try_async_stops_when_retry_predicate_rejects() -> None:
 @pytest.mark.asyncio
 async def test_try_async_panics_on_invalid_jitter_and_catch_failure() -> None:
     async def operation(_context: TryAsyncContext) -> int:
-        raise ValueError("operation failed")
+        msg = "operation failed"
+        raise ValueError(msg)
 
-    with pytest.raises(Panic, match="jitter"):
+    with pytest.raises(PanicError, match="jitter"):
         await try_async(
             operation,
             retry=AsyncRetryConfig[object](times=1, jitter=2.0),
         )
 
     async def broken_catch(_cause: BaseException) -> str:
-        raise RuntimeError("catch failed")
+        msg = "catch failed"
+        raise RuntimeError(msg)
 
-    with pytest.raises(Panic, match="catch handler threw"):
+    with pytest.raises(PanicError, match="catch handler threw"):
         await try_async(operation, broken_catch)
 
 
 @pytest.mark.asyncio
-async def test_async_combinators_support_data_first_and_data_last_forms() -> None:
-    success = ok(2)
-    failure = err("bad")
+async def test_async_result_operations_use_instance_methods() -> None:
+    success = Ok(2)
+    failure = Err("bad")
 
-    chained = await and_then_async(success, lambda value: _completed(ok(str(value))))
+    chained = await success.and_then_async(
+        lambda value: _completed(Ok(str(value))),
+    )
     assert isinstance(chained, Ok)
     assert chained.value == "2"
 
-    chain_later = and_then_async(lambda value: _completed(ok(str(value))))
-    chained_later = await chain_later(success)
-    assert isinstance(chained_later, Ok)
-    assert chained_later.value == "2"
-
-    recovered = await try_recover_async(
-        failure,
-        lambda value: _completed(ok(len(value))),
+    recovered = await failure.try_recover_async(
+        lambda value: _completed(Ok(len(value))),
     )
     assert isinstance(recovered, Ok)
     assert recovered.value == 3
 
     seen: list[object] = []
-    tapped = await tap_async(success, lambda value: _completed(seen.append(value)))
+    tapped = await success.tap_async(lambda value: _completed(seen.append(value)))
     assert tapped is success
-    tapped_error = await tap_error_async(
-        failure,
+    tapped_error = await failure.tap_error_async(
         lambda value: _completed(seen.append(value)),
     )
     assert tapped_error is failure
-    both = await tap_both_async(
-        failure,
-        {"ok": _completed, "err": lambda value: _completed(seen.append(value))},
-    )
-    assert both is failure
-    assert seen == [2, "bad", "bad"]
+    assert seen == [2, "bad"]
 
 
 @pytest.mark.asyncio
 async def test_all_async_and_partition_async_preserve_input_order() -> None:
     async def delayed(value: int) -> Result[int, Never]:
         await asyncio.sleep(0)
-        return ok(value)
+        return Ok(value)
 
-    collected = await all_results_async([delayed(1), ok(2), delayed(3)])
+    collected = await all_results_async([delayed(1), Ok(2), delayed(3)])
     assert isinstance(collected, Ok)
     assert collected.value == [1, 2, 3]
 
-    partitioned = await partition_async([delayed(1), err("bad"), delayed(3)])
+    partitioned = await partition_async([delayed(1), Err("bad"), delayed(3)])
     assert partitioned == ([1, 3], ["bad"])
 
     async def rejected() -> Result[int, str]:
-        raise RuntimeError("network failed")
+        msg = "network failed"
+        raise RuntimeError(msg)
 
-    with pytest.raises(Panic, match="input awaitable rejected"):
+    with pytest.raises(PanicError, match="input awaitable rejected"):
         await all_results_async([rejected()])
 
 
 @pytest.mark.asyncio
 async def test_try_async_validates_retry_policy_and_preserves_panic() -> None:
     async def operation(_context: TryAsyncContext) -> int:
-        raise ValueError("temporary")
+        msg = "temporary"
+        raise ValueError(msg)
 
     with pytest.raises(ValueError, match="unsupported retry backoff"):
         await try_async(
             operation,
-            retry=AsyncRetryConfig[object](backoff=cast("Any", "invalid")),
+            retry=AsyncRetryConfig[object](
+                backoff="invalid",  # ty: ignore[invalid-argument-type]
+            ),
         )
 
-    with pytest.raises(Panic):
+    with pytest.raises(PanicError):
         await try_async(
             lambda _context: _raise_panic(),
             retry=AsyncRetryConfig[object](times=1),
@@ -156,7 +147,8 @@ async def test_try_async_validates_retry_policy_and_preserves_panic() -> None:
 
 
 async def _raise_panic() -> int:
-    raise Panic("bug")
+    msg = "bug"
+    raise PanicError(msg)
 
 
 @pytest.mark.asyncio
@@ -165,7 +157,8 @@ async def test_all_async_cancels_siblings_when_an_input_rejects() -> None:
 
     async def rejected() -> Result[int, str]:
         await asyncio.sleep(0)
-        raise RuntimeError("network failed")
+        msg = "network failed"
+        raise RuntimeError(msg)
 
     async def sibling() -> Result[int, str]:
         try:
@@ -175,7 +168,7 @@ async def test_all_async_cancels_siblings_when_an_input_rejects() -> None:
             raise
         return Ok(1)
 
-    with pytest.raises(Panic, match="input awaitable rejected"):
+    with pytest.raises(PanicError, match="input awaitable rejected"):
         await all_results_async([rejected(), sibling()])
 
     assert cancelled.is_set()

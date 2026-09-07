@@ -10,13 +10,29 @@ from __future__ import annotations
 
 import traceback
 import types
-from collections.abc import Callable, Generator, Mapping, Sequence
-from typing import Any, ClassVar, Never, TypeGuard, TypeVar, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    ClassVar,
+    Never,
+    TypedDict,
+    TypeGuard,
+    TypeVar,
+    cast,
+    overload,
+)
 
-from .core import Err, Panic, _json_safe, _without_diagnostic_stack, err, panic
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator, Mapping, Sequence
+
+from better_result.core import (
+    Err,
+    PanicError,
+    _json_safe,
+    _without_diagnostic_stack,
+    panic,
+)
 
 TaggedErrorLike = TypeVar("TaggedErrorLike", bound="TaggedError")
-HandlerResult = TypeVar("HandlerResult")
 
 
 class TaggedError(Exception):
@@ -39,23 +55,24 @@ class TaggedError(Exception):
         super().__init_subclass__(**kwargs)
         declared_tag = cls.__dict__.get("_tag")
         if not tag:
-            raise ValueError("TaggedError tag must not be empty")
+            msg = "TaggedError tag must not be empty"
+            raise ValueError(msg)
         if declared_tag is not None:
-            raise TypeError("TaggedError subclasses must not define _tag; use tag=...")
+            msg = "TaggedError subclasses must not define _tag; use tag=..."
+            raise TypeError(msg)
         cls._tag = tag
 
     def __init__(
         self,
-        properties: Mapping[str, object] | None = None,
         *,
         message: str | None = None,
         cause: object | None = None,
-        **extra: object,
+        **properties: object,
     ) -> None:
-        values = dict(properties or {})
-        values.update(extra)
+        values = dict(properties)
         if "match" in values:
-            raise TypeError("'match' is reserved by TaggedError")
+            msg = "'match' is reserved by TaggedError"
+            raise TypeError(msg)
         if "message" not in values and message is not None:
             values["message"] = message
         if "cause" not in values and cause is not None:
@@ -94,11 +111,6 @@ class TaggedError(Exception):
         """Return whether *value* is an instance of this tagged class."""
         return isinstance(value, cls)
 
-    @staticmethod
-    def is_tagged_error(value: object) -> TypeGuard[TaggedError]:
-        """Return whether *value* is any TaggedError instance."""
-        return isinstance(value, TaggedError)
-
     def to_dict(self) -> dict[str, object | None]:
         """Return the enumerable error properties plus reserved metadata."""
         return {
@@ -117,30 +129,69 @@ class TaggedError(Exception):
     def to_safe_dict(self) -> dict[str, object | None]:
         """Return error metadata without diagnostic stack traces."""
         return cast(
-            "dict[str, object | None]", _without_diagnostic_stack(self.to_dict())
+            "dict[str, object | None]",
+            _without_diagnostic_stack(self.to_dict()),
         )
 
     def to_safe_json(self) -> dict[str, object | None]:
         """Return a JSON-compatible error payload safe for transport."""
         return cast("dict[str, object | None]", _json_safe(self.to_safe_dict()))
 
-    def match(
+    def match[HandlerResult](
         self,
-        handlers: Mapping[str, Callable[[Any], HandlerResult]],
+        handlers: Mapping[str, Callable[[TaggedError], HandlerResult]],
     ) -> HandlerResult:
         """Exhaustively dispatch to the handler for this error's tag."""
-        return match_error(self, handlers)
+        try:
+            handler = handlers[self._tag]
+            return handler(self)
+        except PanicError:
+            raise
+        except Exception as cause:
+            panic("TaggedError.match handler threw", cause)
+
+    @overload
+    def match_partial[HandlerResult](
+        self,
+        handlers: Mapping[str, Callable[[TaggedError], HandlerResult]],
+        on_unhandled: None = None,
+    ) -> HandlerResult | TaggedError: ...
+
+    @overload
+    def match_partial[HandlerResult, UnhandledResult](
+        self,
+        handlers: Mapping[str, Callable[[TaggedError], HandlerResult]],
+        on_unhandled: Callable[[TaggedError], UnhandledResult],
+    ) -> HandlerResult | UnhandledResult: ...
+
+    def match_partial[HandlerResult, UnhandledResult](
+        self,
+        handlers: Mapping[str, Callable[[TaggedError], HandlerResult]],
+        on_unhandled: Callable[[TaggedError], UnhandledResult] | None = None,
+    ) -> HandlerResult | UnhandledResult | TaggedError:
+        """Dispatch a tagged handler, preserving or transforming unknown tags."""
+        try:
+            if self._tag in handlers:
+                return handlers[self._tag](self)
+            if on_unhandled is None:
+                return self
+            return on_unhandled(self)
+        except PanicError:
+            raise
+        except Exception as cause:
+            panic("TaggedError.match_partial handler threw", cause)
 
     def __iter__(self) -> Generator[Err[TaggedError], None, Never]:
         """Yield this error as an Err, then panic if iteration continues."""
-        yield err(self)
+        yield Err(self)
         panic("Unreachable: Err yielded in TaggedError but generator continued", self)
 
 
 def tagged_error(tag: str) -> type[TaggedError]:
     """Create a dynamic TaggedError subclass for *tag*."""
     if not tag:
-        raise ValueError("tag must not be empty")
+        msg = "tag must not be empty"
+        raise ValueError(msg)
     return types.new_class(tag, (TaggedError,), {"tag": tag})
 
 
@@ -161,141 +212,7 @@ def _serialize_cause(cause: object | None) -> object | None:
     return cause
 
 
-def _tag_of(error: object) -> str:
-    tag = getattr(error, "_tag", None)
-    if not isinstance(tag, str):
-        raise TypeError("error must have a string _tag")
-    return tag
-
-
-def _match_error[HandlerResult](
-    error: object,
-    handlers: Mapping[str, Callable[[Any], HandlerResult]],
-) -> HandlerResult:
-    try:
-        handler = handlers[_tag_of(error)]
-        return handler(error)
-    except Panic:
-        raise
-    except Exception as cause:
-        panic("match_error handler threw", cause)
-
-
-@overload
-def match_error[MatchResult](
-    handlers: Mapping[str, Callable[[Any], MatchResult]],
-) -> Callable[[TaggedError], MatchResult]: ...
-
-
-@overload
-def match_error[MatchResult](
-    error: TaggedError,
-    handlers: Mapping[str, Callable[[Any], MatchResult]],
-) -> MatchResult: ...
-
-
-def match_error(
-    error_or_handlers: TaggedError | Mapping[str, Callable[[Any], object]],
-    handlers: Mapping[str, Callable[[Any], object]] | None = None,
-) -> object | Callable[[TaggedError], object]:
-    """Dispatch to a tagged error handler in data-first or data-last form."""
-    if handlers is None:
-        if not isinstance(error_or_handlers, Mapping):
-            raise TypeError("handlers must be a mapping")
-        return lambda error: _match_error(error, error_or_handlers)
-    if not isinstance(error_or_handlers, TaggedError):
-        raise TypeError("error must be a TaggedError")
-    return _match_error(error_or_handlers, handlers)
-
-
-def _identity(error: TaggedError) -> TaggedError:
-    return error
-
-
-def _apply_partial[HandlerResult](
-    error: TaggedError,
-    handlers: Mapping[str, Callable[[Any], HandlerResult]],
-    on_unhandled: Callable[[TaggedError], object],
-) -> object:
-    try:
-        tag = _tag_of(error)
-        if tag in handlers:
-            return handlers[tag](error)
-        return on_unhandled(error)
-    except Panic:
-        raise
-    except Exception as cause:
-        panic("match_error_partial handler threw", cause)
-
-
-@overload
-def match_error_partial[MatchResult](
-    handlers: Mapping[str, Callable[[Any], MatchResult]],
-) -> Callable[[TaggedError], MatchResult | TaggedError]: ...
-
-
-@overload
-def match_error_partial[MatchResult, UnhandledResult](
-    handlers: Mapping[str, Callable[[Any], MatchResult]],
-    on_unhandled: Callable[[TaggedError], UnhandledResult],
-) -> Callable[[TaggedError], MatchResult | UnhandledResult]: ...
-
-
-@overload
-def match_error_partial[MatchResult](
-    error: TaggedError,
-    handlers: Mapping[str, Callable[[Any], MatchResult]],
-) -> MatchResult | TaggedError: ...
-
-
-@overload
-def match_error_partial[MatchResult, UnhandledResult](
-    error: TaggedError,
-    handlers: Mapping[str, Callable[[Any], MatchResult]],
-    on_unhandled: Callable[[TaggedError], UnhandledResult],
-) -> MatchResult | UnhandledResult: ...
-
-
-def match_error_partial[HandlerResult](
-    error_or_handlers: TaggedError | Mapping[str, Callable[[Any], HandlerResult]],
-    handlers_or_on_unhandled: Mapping[str, Callable[[Any], HandlerResult]]
-    | Callable[[TaggedError], object]
-    | None = None,
-    on_unhandled: Callable[[TaggedError], object] | None = None,
-) -> object | Callable[[TaggedError], object]:
-    """
-    Partially match tagged errors, preserving unhandled errors by default.
-
-    Supports data-first calls::
-
-        match_error_partial(error, handlers)
-        match_error_partial(error, handlers, fallback)
-
-    and data-last calls::
-
-        match_error_partial(handlers)
-        match_error_partial(handlers, fallback)
-    """
-    if isinstance(error_or_handlers, Mapping):
-        handlers = error_or_handlers
-        if handlers_or_on_unhandled is None:
-            fallback: Callable[[TaggedError], object] = _identity
-        elif isinstance(handlers_or_on_unhandled, Mapping):
-            raise TypeError("on_unhandled must be callable")
-        else:
-            fallback = handlers_or_on_unhandled
-        return lambda error: _apply_partial(error, handlers, fallback)
-
-    error = error_or_handlers
-    if not isinstance(handlers_or_on_unhandled, Mapping):
-        raise TypeError("handlers must be a mapping")
-    fallback: Callable[[TaggedError], object] = (
-        on_unhandled if on_unhandled is not None else _identity
-    )
-    return _apply_partial(error, handlers_or_on_unhandled, fallback)
-
-
-class UnhandledException(TaggedError, tag="UnhandledException"):
+class UnhandledError(TaggedError, tag="UnhandledException"):
     """Wrap an exception or other value caught by a Result operation."""
 
     def __init__(self, cause: object) -> None:
@@ -305,7 +222,11 @@ class UnhandledException(TaggedError, tag="UnhandledException"):
         )
 
 
-type ResultCodecIssue = Mapping[str, object]
+class ResultCodecIssue(TypedDict, total=False):
+    """A structured issue returned by a Result codec schema."""
+
+    message: str
+    value: object
 
 
 class ResultDeserializationError(TaggedError, tag="ResultDeserializationError"):

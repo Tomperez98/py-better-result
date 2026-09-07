@@ -10,12 +10,17 @@ from typing import cast
 
 import pytest
 
-from better_result.codec import ResultCodec, SchemaFailure, codec, codec_config
+from better_result.codec import ResultCodec, SchemaFailure, async_codec, codec
 from better_result.core import Err, Ok
-from better_result.error import ResultDeserializationError, TaggedError, tagged_error
+from better_result.error import (
+    ResultCodecIssue,
+    ResultDeserializationError,
+    TaggedError,
+    tagged_error,
+)
 
 
-class UserNotFound(TaggedError, tag="UserNotFound"):
+class UserNotFoundError(TaggedError, tag="UserNotFound"):
     """A requested user does not exist."""
 
     user_id: str
@@ -24,7 +29,7 @@ class UserNotFound(TaggedError, tag="UserNotFound"):
         super().__init__(message=f"User {user_id} was not found", user_id=user_id)
 
 
-class ValidationRejected(TaggedError, tag="ValidationRejected"):
+class ValidationRejectedError(TaggedError, tag="ValidationRejected"):
     """A payload contains multiple validation failures."""
 
     field: str
@@ -38,7 +43,7 @@ class ValidationRejected(TaggedError, tag="ValidationRejected"):
         )
 
 
-class ServiceUnavailable(TaggedError, tag="ServiceUnavailable"):
+class ServiceUnavailableError(TaggedError, tag="ServiceUnavailable"):
     """A dependency could not be reached."""
 
     service: str
@@ -100,17 +105,20 @@ def encode_tagged_error(error: TaggedError) -> dict[str, object | None]:
 
 def decode_record(value: object) -> dict[str, object] | SchemaFailure:
     if not isinstance(value, Mapping):
-        return SchemaFailure(({"message": "expected an object"},))
+        issue: ResultCodecIssue = {"message": "expected an object"}
+        return SchemaFailure((issue,))
     return dict(value)
 
 
 def decode_tagged_error(value: object) -> TaggedError | SchemaFailure:
     if not isinstance(value, Mapping):
-        return SchemaFailure(({"message": "expected a tagged error object"},))
+        issue: ResultCodecIssue = {"message": "expected a tagged error object"}
+        return SchemaFailure((issue,))
     tag = value.get("_tag")
     if not isinstance(tag, str) or tag not in SUPPORTED_TAGS:
-        return SchemaFailure(({"message": "unsupported error tag"},))
-    return tagged_error(tag)(dict(value))
+        issue: ResultCodecIssue = {"message": "unsupported error tag"}
+        return SchemaFailure((issue,))
+    return tagged_error(tag)(**dict(value))
 
 
 def make_codec() -> ResultCodec[
@@ -122,24 +130,22 @@ def make_codec() -> ResultCodec[
     TaggedError,
 ]:
     return codec(
-        codec_config(
-            serialize_ok=encode_record,
-            serialize_err=encode_tagged_error,
-            deserialize_ok=decode_record,
-            deserialize_err=decode_tagged_error,
-        ),
+        serialize_ok=encode_record,
+        serialize_err=encode_tagged_error,
+        deserialize_ok=decode_record,
+        deserialize_err=decode_tagged_error,
     )
 
 
 def test_tagged_error_tags_properties_causes_and_traces_match_golden() -> None:
     result_codec = make_codec()
     examples = {
-        "user-not-found": UserNotFound("user-42"),
-        "validation-rejected": ValidationRejected(
+        "user-not-found": UserNotFoundError("user-42"),
+        "validation-rejected": ValidationRejectedError(
             "email",
             ["required", "must contain @"],
         ),
-        "service-unavailable": ServiceUnavailable(
+        "service-unavailable": ServiceUnavailableError(
             "billing",
             TimeoutError("upstream timed out"),
         ),
@@ -198,16 +204,15 @@ async def test_async_rich_codec_uses_the_same_tagged_protocol_goldens() -> None:
         await asyncio.sleep(0)
         return encode_tagged_error(error)
 
-    async_config = codec_config(
+    result_codec = async_codec(
         serialize_ok=async_encode_record,
         serialize_err=async_encode_error,
         deserialize_ok=decode_record,
         deserialize_err=decode_tagged_error,
     )
-    result_codec = codec(async_config)
-    error = ServiceUnavailable("billing", TimeoutError("upstream timed out"))
+    error = ServiceUnavailableError("billing", TimeoutError("upstream timed out"))
 
-    encoded = await result_codec.serialize_async(
+    encoded = await result_codec.serialize(
         Err(error),
     )
     assert isinstance(encoded, Ok)

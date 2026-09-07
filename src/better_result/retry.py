@@ -9,8 +9,8 @@ import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast, overload
 
-from .core import Err, Ok, Panic, Result
-from .error import UnhandledException
+from better_result.core import Err, Ok, PanicError, Result
+from better_result.error import UnhandledError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -58,41 +58,40 @@ class AsyncRetryConfig[E]:
     ) = 0.0
     backoff: Literal["linear", "constant", "exponential"] = "constant"
     should_retry: Callable[[E, TryAsyncContext], bool | Awaitable[bool]] | None = None
-    jitter: bool | float = False
+    jitter: float = 0.0
     cancel_event: asyncio.Event | None = None
 
 
-def _retry_times(retry: int | RetryConfig | None) -> int:
+def _retry_times(retry: RetryConfig | None) -> int:
     if retry is None:
         return 0
-    times = retry if isinstance(retry, int) else retry.times
-    if times < 0:
-        message = f"retry times must not be negative, got {times}"
+    if retry.times < 0:
+        message = f"retry times must not be negative, got {retry.times}"
         raise ValueError(message)
-    return times
+    return retry.times
 
 
 @overload
 def try_result[A](
     operation: Callable[[TryContext], A],
     catch: None = None,
-    retry: int | RetryConfig | None = None,
-) -> Result[A, UnhandledException]: ...
+    retry: RetryConfig | None = None,
+) -> Result[A, UnhandledError]: ...
 
 
 @overload
 def try_result[A, E](
     operation: Callable[[TryContext], A],
     catch: Callable[[BaseException], E],
-    retry: int | RetryConfig | None = None,
+    retry: RetryConfig | None = None,
 ) -> Result[A, E]: ...
 
 
 def try_result[A, E](
     operation: Callable[[TryContext], A],
     catch: Callable[[BaseException], E] | None = None,
-    retry: int | RetryConfig | None = None,
-) -> Result[A, E | UnhandledException]:
+    retry: RetryConfig | None = None,
+) -> Result[A, E | UnhandledError]:
     """
     Run a callback and return its value or a handled failure.
 
@@ -102,25 +101,26 @@ def try_result[A, E](
     """
     times = _retry_times(retry)
 
-    def execute(context: TryContext) -> Result[A, E | UnhandledException]:
+    def execute(context: TryContext) -> Result[A, E | UnhandledError]:
         try:
             return Ok(operation(context))
-        except Panic:
+        except PanicError:
             raise
         except Exception as cause:
             if catch is None:
-                return Err(UnhandledException(cause))
+                return Err(UnhandledError(cause))
             try:
                 return Err(catch(cause))
-            except Panic:
+            except PanicError:
                 raise
             except Exception as catch_error:
-                raise Panic(
-                    "Result.try catch handler threw",
+                msg = "Result.try catch handler threw"
+                raise PanicError(
+                    msg,
                     catch_error,
                 ) from catch_error
 
-    result: Result[A, E | UnhandledException] = execute(TryContext(attempt=1))
+    result: Result[A, E | UnhandledError] = execute(TryContext(attempt=1))
     for attempt in range(2, times + 2):
         if isinstance(result, Ok):
             break
@@ -154,13 +154,10 @@ async def _sleep_for_retry(
 
 
 def _validate_delay(delay_ms: float) -> float:
-    try:
-        delay = float(delay_ms)
-    except (TypeError, ValueError) as cause:
-        raise Panic("Result.try_async retry delay must be a number", cause) from cause
-    if not math.isfinite(delay) or delay < 0:
-        raise Panic("Result.try_async retry delay must be finite and non-negative")
-    return delay
+    if not math.isfinite(delay_ms) or delay_ms < 0:
+        msg = "Result.try_async retry delay must be finite and non-negative"
+        raise PanicError(msg)
+    return delay_ms
 
 
 def _static_retry_delay(
@@ -175,14 +172,11 @@ def _static_retry_delay(
     return delay_ms * float(2**retry_attempt)
 
 
-def _jitter_factor(*, jitter: bool | float) -> float:
-    if jitter is True:
-        return 1.0
-    if jitter is False:
-        return 0.0
+def _jitter_factor(*, jitter: float) -> float:
     if not math.isfinite(jitter) or not 0 <= jitter <= 1:
-        raise Panic(
-            "Result.try_async retry jitter must be a finite number between 0 and 1",
+        msg = "Result.try_async retry jitter must be a finite number between 0 and 1"
+        raise PanicError(
+            msg,
         )
     return jitter
 
@@ -191,8 +185,8 @@ def _jitter_factor(*, jitter: bool | float) -> float:
 async def try_async[A](
     operation: Callable[[TryAsyncContext], Awaitable[A]],
     catch: None = None,
-    retry: AsyncRetryConfig[UnhandledException] | None = None,
-) -> Result[A, UnhandledException]: ...
+    retry: AsyncRetryConfig[UnhandledError] | None = None,
+) -> Result[A, UnhandledError]: ...
 
 
 @overload
@@ -207,9 +201,9 @@ async def try_async[A, E](
     operation: Callable[[TryAsyncContext], Awaitable[A]],
     catch: Callable[[BaseException], E | Awaitable[E]] | None = None,
     retry: AsyncRetryConfig[E] | None = None,
-) -> Result[A, E | UnhandledException]:
+) -> Result[A, E | UnhandledError]:
     """Run an async callback with optional retry, backoff, and cancellation."""
-    policy = retry or AsyncRetryConfig[E]()
+    policy = retry if retry is not None else AsyncRetryConfig[E]()
     if policy.times < 0:
         message = f"retry times must not be negative, got {policy.times}"
         raise ValueError(message)
@@ -220,26 +214,27 @@ async def try_async[A, E](
         _validate_delay(policy.delay_ms)
     jitter_factor = _jitter_factor(jitter=policy.jitter)
 
-    async def execute(context: TryAsyncContext) -> Result[A, E | UnhandledException]:
+    async def execute(context: TryAsyncContext) -> Result[A, E | UnhandledError]:
         try:
             return Ok(await operation(context))
         except asyncio.CancelledError:
             raise
-        except Panic:
+        except PanicError:
             raise
         except Exception as cause:
             if catch is None:
-                return Err(UnhandledException(cause))
+                return Err(UnhandledError(cause))
             try:
                 handled_error: E = await _await_value(catch(cause))
                 return Err(handled_error)
             except asyncio.CancelledError:
                 raise
-            except Panic:
+            except PanicError:
                 raise
             except Exception as catch_error:
-                raise Panic(
-                    "Result.try_async catch handler threw",
+                msg_0 = "Result.try_async catch handler threw"
+                raise PanicError(
+                    msg_0,
                     catch_error,
                 ) from catch_error
 
@@ -261,11 +256,12 @@ async def try_async[A, E](
             continue_retry = await _await_value(retry_predicate(error, context))
         except asyncio.CancelledError:
             raise
-        except Panic:
+        except PanicError:
             raise
         except Exception as cause:
-            raise Panic(
-                "Result.try_async should_retry predicate threw",
+            msg_0 = "Result.try_async should_retry predicate threw"
+            raise PanicError(
+                msg_0,
                 cause,
             ) from cause
         if not continue_retry:
@@ -280,11 +276,12 @@ async def try_async[A, E](
                 delay_ms = await _await_value(delay_callback(error, context))
             except asyncio.CancelledError:
                 raise
-            except Panic:
+            except PanicError:
                 raise
             except Exception as cause:
-                raise Panic(
-                    "Result.try_async delay_ms callback threw",
+                msg_0 = "Result.try_async delay_ms callback threw"
+                raise PanicError(
+                    msg_0,
                     cause,
                 ) from cause
         else:
@@ -304,7 +301,3 @@ async def try_async[A, E](
         result = await execute(context)
 
     return result
-
-
-try_ = try_result
-try_promise = try_async

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from typing import TYPE_CHECKING, Never, cast, overload
+from typing import TYPE_CHECKING, cast
 
-from .core import Err, Ok, Panic, Result, _require_result
+from better_result.core import Err, Ok, PanicError, Result, _require_result
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Iterable
@@ -16,10 +16,9 @@ def all_results[A, E](results: Iterable[Result[A, E]]) -> Result[list[A], E]:
     """Collect success values in input order or return the first error."""
     values: list[A] = []
     for result in results:
-        checked = _require_result(result, "Result.all input must be a Result")
-        if isinstance(checked, Err):
-            return Err(cast("E", checked.error))
-        values.append(cast("A", checked.value))
+        if isinstance(result, Err):
+            return Err(result.error)
+        values.append(result.value)
     return Ok(values)
 
 
@@ -44,7 +43,7 @@ async def _await_results[A, E](
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
-    except Panic:
+    except PanicError:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -53,7 +52,8 @@ async def _await_results[A, E](
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        raise Panic("Result.all_async input awaitable rejected", cause) from cause
+        msg = "Result.all_async input awaitable rejected"
+        raise PanicError(msg, cause) from cause
 
     return [
         cast(
@@ -80,11 +80,10 @@ def partition[A, E](results: Iterable[Result[A, E]]) -> tuple[list[A], list[E]]:
     values: list[A] = []
     errors: list[E] = []
     for result in results:
-        checked = _require_result(result, "Result.partition input must be a Result")
-        if isinstance(checked, Ok):
-            values.append(cast("A", checked.value))
+        if isinstance(result, Ok):
+            values.append(result.value)
         else:
-            errors.append(cast("E", checked.error))
+            errors.append(result.error)
     return values, errors
 
 
@@ -93,34 +92,3 @@ async def partition_async[A, E](
 ) -> tuple[list[A], list[E]]:
     """Await all inputs concurrently and partition their payloads."""
     return partition(await _await_results(results))
-
-
-@overload
-def flatten[A](result: Ok[Ok[A]]) -> Result[A, Never]: ...
-
-
-@overload
-def flatten[E](result: Ok[Err[E]]) -> Result[Never, E]: ...
-
-
-@overload
-def flatten[E2](result: Err[E2]) -> Result[Never, E2]: ...
-
-
-@overload
-def flatten[A, E, E2](result: Result[Result[A, E], E2]) -> Result[A, E | E2]: ...
-
-
-def flatten[A, E, E2](result: Result[Result[A, E], E2]) -> Result[A, E | E2]:
-    """Flatten a nested Result into one Result."""
-    checked = _require_result(result, "Result.flatten input must be a Result")
-    if isinstance(checked, Ok):
-        nested = checked.value
-        nested_result = _require_result(
-            nested,
-            "Result.flatten nested input must be a Result",
-        )
-        if isinstance(nested_result, Ok):
-            return Ok(cast("A", nested_result.value))
-        return Err(cast("E", nested_result.error))
-    return Err(cast("E2", checked.error))

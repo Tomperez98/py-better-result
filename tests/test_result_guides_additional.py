@@ -13,20 +13,12 @@ from better_result.collections import (
     partition,
     partition_async,
 )
-from better_result.combinators import (
-    tap,
-    tap_both,
-    tap_both_async,
-    tap_error,
-    tap_error_async,
-    unwrap_or,
-)
 from better_result.retry import AsyncRetryConfig, TryAsyncContext, try_async
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Iterator
 
-from better_result.core import Err, Ok, Panic, Result, err, ok
+from better_result.core import Err, Ok, PanicError, Result
 
 
 @pytest.mark.asyncio
@@ -52,7 +44,8 @@ async def test_static_retry_backoff_policies_schedule_expected_delays(
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
     async def operation(_context: TryAsyncContext) -> int:
-        raise RuntimeError("temporary")
+        msg = "temporary"
+        raise RuntimeError(msg)
 
     result = await try_async(
         operation,
@@ -75,7 +68,8 @@ async def test_retry_callbacks_receive_failed_attempt_context_and_control_retrie
 
     async def operation(context: TryAsyncContext) -> int:
         attempts.append(context.attempt)
-        raise RuntimeError("temporary")
+        msg = "temporary"
+        raise RuntimeError(msg)
 
     def should_retry(_error: str, context: TryAsyncContext) -> bool:
         retry_attempts.append(context.attempt)
@@ -105,12 +99,14 @@ async def test_retry_callbacks_receive_failed_attempt_context_and_control_retrie
 @pytest.mark.asyncio
 async def test_retry_policy_callback_failures_are_panics() -> None:
     async def operation(_context: TryAsyncContext) -> int:
-        raise RuntimeError("temporary")
+        msg = "temporary"
+        raise RuntimeError(msg)
 
     def broken_should_retry(_error: str, _context: TryAsyncContext) -> bool:
-        raise ValueError("bad retry policy")
+        msg = "bad retry policy"
+        raise ValueError(msg)
 
-    with pytest.raises(Panic, match="should_retry predicate threw"):
+    with pytest.raises(PanicError, match="should_retry predicate threw"):
         await try_async(
             operation,
             str,
@@ -118,9 +114,10 @@ async def test_retry_policy_callback_failures_are_panics() -> None:
         )
 
     def broken_delay(_error: str, _context: TryAsyncContext) -> float:
-        raise ValueError("bad delay policy")
+        msg = "bad delay policy"
+        raise ValueError(msg)
 
-    with pytest.raises(Panic, match="delay_ms callback threw"):
+    with pytest.raises(PanicError, match="delay_ms callback threw"):
         await try_async(
             operation,
             str,
@@ -131,53 +128,44 @@ async def test_retry_policy_callback_failures_are_panics() -> None:
 def test_all_stops_at_the_first_error_and_partition_keeps_every_branch() -> None:
     def results() -> Iterator[Result[int, str]]:
         yield Ok(1)
-        yield err("first")
-        raise AssertionError("all() iterated after its first error")
+        yield Err("first")
+        msg = "all() iterated after its first error"
+        raise AssertionError(msg)
 
     collected = all_results(results())
     assert isinstance(collected, Err)
     assert collected.error == "first"
 
-    values, errors = partition([ok(1), err("first"), ok(2), err("second")])
+    values, errors = partition([Ok(1), Err("first"), Ok(2), Err("second")])
     assert values == [1, 2]
     assert errors == ["first", "second"]
 
 
 def test_observers_use_static_forms_and_preserve_the_original_result() -> None:
-    success = ok(7)
-    failure = err("missing")
+    success = Ok(7)
+    failure = Err("missing")
     seen: list[object] = []
 
     def record_error(error: str) -> None:
         seen.append(error)
 
-    assert tap(success, seen.append) is success
-    assert tap_error(failure, record_error) is failure
-    assert tap_error(record_error)(failure) is failure
-    assert tap_both({"ok": seen.append, "err": record_error})(success) is success
-    assert tap_both({"ok": seen.append, "err": record_error})(failure) is failure
-    assert seen == [7, "missing", "missing", 7, "missing"]
+    assert success.tap(seen.append) is success
+    assert failure.tap_error(record_error) is failure
+    assert failure.tap_error(record_error) is failure
+    assert seen == [7, "missing", "missing"]
 
 
 def test_each_observer_defect_is_a_panic() -> None:
-    with pytest.raises(Panic, match="tap_error callback threw"):
-        err("missing").tap_error(
+    with pytest.raises(PanicError, match="tap_error callback threw"):
+        Err("missing").tap_error(
             lambda _error: (_ for _ in ()).throw(RuntimeError("log failed")),
-        )
-
-    with pytest.raises(Panic, match="tap_both err callback threw"):
-        err("missing").tap_both(
-            {
-                "ok": lambda _value: None,
-                "err": lambda _error: (_ for _ in ()).throw(RuntimeError("log failed")),
-            },
         )
 
 
 @pytest.mark.asyncio
-async def test_async_observers_use_data_last_forms_and_preserve_identity() -> None:
-    success = ok(7)
-    failure = err("missing")
+async def test_async_observers_use_instance_methods_and_preserve_identity() -> None:
+    success = Ok(7)
+    failure = Err("missing")
     seen: list[object] = []
 
     async def observe_error(error: str) -> None:
@@ -186,18 +174,10 @@ async def test_async_observers_use_data_last_forms_and_preserve_identity() -> No
     async def observe_value(value: int) -> None:
         seen.append(value)
 
-    observed_error = tap_error_async(observe_error)
-    assert await observed_error(failure) is failure
+    assert await failure.tap_error_async(observe_error) is failure
 
-    observed_both = tap_both_async({"ok": observe_value, "err": observe_error})
-    assert await observed_both(success) is success
+    assert await success.tap_async(observe_value) is success
     assert seen == ["missing", 7]
-
-    async def broken_error(_error: str) -> None:
-        raise RuntimeError("async log failed")
-
-    with pytest.raises(Panic, match="tap_both_async err callback threw"):
-        await tap_both_async({"ok": observe_value, "err": broken_error})(failure)
 
 
 @pytest.mark.asyncio
@@ -222,21 +202,21 @@ async def test_all_async_and_partition_async_preserve_order_and_panic_on_rejecti
     assert_type(partitioned, tuple[list[int], list[str]])
 
     async def rejected() -> Result[int, str]:
-        raise RuntimeError("broken input")
+        msg = "broken input"
+        raise RuntimeError(msg)
 
-    with pytest.raises(Panic, match="input awaitable rejected"):
+    with pytest.raises(PanicError, match="input awaitable rejected"):
         await partition_async([rejected()])
 
 
-def test_unwrap_or_leaves_results_safely_and_supports_both_forms() -> None:
-    failure = err("missing")
-    success = ok(8080)
+def test_unwrap_or_leaves_results_safely() -> None:
+    failure = Err("missing")
+    success = Ok(8080)
 
-    assert unwrap_or(failure, 3000) == 3000
-    assert unwrap_or(3000)(failure) == 3000
-    assert unwrap_or(success, 3000) == 8080
+    assert failure.unwrap_or(3000) == 3000
+    assert success.unwrap_or(3000) == 8080
 
-    with pytest.raises(Panic) as raised:
+    with pytest.raises(PanicError) as raised:
         failure.unwrap("configuration must be valid")
     assert raised.value.message == "configuration must be valid"
     assert raised.value.cause == "missing"

@@ -9,14 +9,19 @@ from typing import cast
 
 import pytest
 
-from better_result.codec import SchemaFailure, codec, codec_config
-from better_result.core import Err, Ok, Panic
-from better_result.error import ResultDeserializationError, ResultSerializationError
+from better_result.codec import SchemaFailure, async_codec, codec
+from better_result.core import Err, Ok, PanicError
+from better_result.error import (
+    ResultCodecIssue,
+    ResultDeserializationError,
+    ResultSerializationError,
+)
 
 
 def encode_number(value: int) -> str | SchemaFailure:
     if value < 0:
-        return SchemaFailure(({"message": "number must be non-negative"},))
+        issue: ResultCodecIssue = {"message": "number must be non-negative"}
+        return SchemaFailure((issue,))
     return str(value)
 
 
@@ -26,7 +31,8 @@ def encode_error(value: str) -> str:
 
 def decode_number(value: str | None) -> int | SchemaFailure:
     if not isinstance(value, str) or not value.isdecimal():
-        return SchemaFailure(({"message": "expected digits"},))
+        issue: ResultCodecIssue = {"message": "expected digits"}
+        return SchemaFailure((issue,))
     return int(value)
 
 
@@ -34,7 +40,7 @@ def decode_error(value: str) -> str:
     return value
 
 
-CONFIG = codec_config(
+CONFIG = codec(
     serialize_ok=encode_number,
     serialize_err=encode_error,
     deserialize_ok=decode_number,
@@ -61,7 +67,7 @@ def _stable_codec_error(
 
 
 def test_codec_serializes_and_deserializes_both_result_branches() -> None:
-    result_codec = codec(CONFIG)
+    result_codec = CONFIG
 
     encoded_success = result_codec.serialize(Ok(42))
     assert isinstance(encoded_success, Ok)
@@ -81,7 +87,7 @@ def test_codec_serializes_and_deserializes_both_result_branches() -> None:
 
 
 def test_codec_returns_typed_errors_for_invalid_envelopes_and_payloads() -> None:
-    result_codec = codec(CONFIG)
+    result_codec = CONFIG
 
     invalid_envelope = result_codec.deserialize({"status": "unknown"})
     assert isinstance(invalid_envelope, Err)
@@ -100,7 +106,7 @@ def test_codec_returns_typed_errors_for_invalid_envelopes_and_payloads() -> None
 
 
 def test_codec_wire_envelopes_match_golden_protocol_files() -> None:
-    result_codec = codec(CONFIG)
+    result_codec = CONFIG
 
     encoded_success = result_codec.serialize(Ok(42))
     assert isinstance(encoded_success, Ok)
@@ -112,7 +118,7 @@ def test_codec_wire_envelopes_match_golden_protocol_files() -> None:
 
 
 def test_codec_fixture_inputs_and_boundary_errors_match_golden_files() -> None:
-    result_codec = codec(CONFIG)
+    result_codec = CONFIG
 
     decoded_success = result_codec.deserialize(_golden_json("ok-envelope.json"))
     assert isinstance(decoded_success, Ok)
@@ -144,27 +150,27 @@ def test_codec_fixture_inputs_and_boundary_errors_match_golden_files() -> None:
     )
 
 
-def test_codec_unsafe_methods_panic_only_on_codec_errors() -> None:
-    result_codec = codec(CONFIG)
+def test_codec_errors_are_explicit_result_values() -> None:
+    result_codec = CONFIG
 
-    assert result_codec.serialize_unsafe(Ok(42)) == {
+    assert result_codec.serialize(Ok(42)).unwrap() == {
         "status": "ok",
         "value": "42",
     }
-    decoded_error = result_codec.deserialize_unsafe(
+    decoded_error = result_codec.deserialize(
         {"status": "error", "error": "missing"},
     )
     assert isinstance(decoded_error, Err)
     assert decoded_error.error == "missing"
 
-    with pytest.raises(Panic, match="serialize_unsafe failed"):
-        result_codec.serialize_unsafe(Ok(-1))
-    with pytest.raises(Panic, match="deserialize_unsafe failed"):
-        result_codec.deserialize_unsafe({"status": "ok", "value": "nope"})
+    with pytest.raises(PanicError, match="Unwrap called on Err"):
+        result_codec.serialize(Ok(-1)).unwrap()
+    with pytest.raises(PanicError, match="Unwrap called on Err"):
+        result_codec.deserialize({"status": "ok", "value": "nope"}).unwrap()
 
 
 def test_missing_payload_is_passed_to_the_selected_schema() -> None:
-    result_codec = codec(CONFIG)
+    result_codec = CONFIG
 
     decoded = result_codec.deserialize({"status": "ok"})
     assert isinstance(decoded, Err)
@@ -177,17 +183,15 @@ async def test_codec_preserves_schema_cancellation() -> None:
     async def cancel(_value: int) -> str:
         raise asyncio.CancelledError
 
-    result_codec = codec(
-        codec_config(
-            serialize_ok=cancel,
-            serialize_err=encode_error,
-            deserialize_ok=decode_number,
-            deserialize_err=decode_error,
-        ),
+    result_codec = async_codec(
+        serialize_ok=cancel,
+        serialize_err=encode_error,
+        deserialize_ok=decode_number,
+        deserialize_err=decode_error,
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await result_codec.serialize_async(Ok(1))
+        await result_codec.serialize(Ok(1))
 
 
 @pytest.mark.asyncio
@@ -200,19 +204,18 @@ async def test_codec_supports_async_schemas() -> None:
         await asyncio.sleep(0)
         return int(value)
 
-    async_config = codec_config(
+    result_codec = async_codec(
         serialize_ok=async_encode,
         serialize_err=encode_error,
         deserialize_ok=async_decode,
         deserialize_err=decode_error,
     )
-    result_codec = codec(async_config)
 
-    encoded = await result_codec.serialize_async(Ok(7))
+    encoded = await result_codec.serialize(Ok(7))
     assert isinstance(encoded, Ok)
     assert encoded.value == {"status": "ok", "value": "7"}
 
-    decoded = await result_codec.deserialize_async({"status": "ok", "value": "7"})
+    decoded = await result_codec.deserialize({"status": "ok", "value": "7"})
     assert isinstance(decoded, Ok)
     assert decoded.value == 7
 
@@ -227,18 +230,17 @@ async def test_async_codec_uses_the_same_golden_wire_protocol() -> None:
         await asyncio.sleep(0)
         return int(value)
 
-    async_config = codec_config(
+    result_codec = async_codec(
         serialize_ok=async_encode,
         serialize_err=encode_error,
         deserialize_ok=async_decode,
         deserialize_err=decode_error,
     )
-    result_codec = codec(async_config)
 
-    encoded = await result_codec.serialize_async(Ok(42))
+    encoded = await result_codec.serialize(Ok(42))
     assert isinstance(encoded, Ok)
     assert encoded.value == _golden_json("ok-envelope.json")
 
-    decoded = await result_codec.deserialize_async(_golden_json("ok-envelope.json"))
+    decoded = await result_codec.deserialize(_golden_json("ok-envelope.json"))
     assert isinstance(decoded, Ok)
     assert decoded.value == 42

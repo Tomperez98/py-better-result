@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from typing import (
     TYPE_CHECKING,
     ClassVar,
+    Generic,
     Literal,
     Never,
     TypedDict,
@@ -33,8 +34,10 @@ if TYPE_CHECKING:
 A = TypeVar("A")
 B = TypeVar("B")
 E = TypeVar("E")
+E_co = TypeVar("E_co", covariant=True)
 E2 = TypeVar("E2")
 T = TypeVar("T")
+T_co = TypeVar("T_co", covariant=True)
 U = TypeVar("U")
 
 
@@ -93,7 +96,7 @@ class Panic(Exception):
         """Return a JSON-compatible panic payload safe for transport."""
         return cast("dict[str, object | None]", _json_safe(self.to_safe_dict()))
 
-    def __iter__(self) -> Generator[Err[Never, Panic], None, Never]:
+    def __iter__(self) -> Generator[Err[Panic], None, Never]:
         """Yield this panic as an Err, then fail if iteration continues."""
         yield err(self)
         panic("Unreachable: Err yielded in Panic but generator continued", self)
@@ -210,15 +213,15 @@ class AsyncTapHandlers[T, E](TypedDict):
     err: Callable[[E], Awaitable[object]]
 
 
-class Ok[T, E]:
+class Ok(Generic[T_co]):  # noqa: UP046
     """Successful immutable Result variant."""
 
     __slots__ = ("value",)
     __hash__ = None
     status: ClassVar[Literal["ok"]] = "ok"
-    value: T
+    value: T_co
 
-    def __init__(self, value: T) -> None:
+    def __init__(self, value: T_co) -> None:
         object.__setattr__(self, "value", value)
 
     @override
@@ -243,35 +246,35 @@ class Ok[T, E]:
     def is_err(self) -> bool:
         return False
 
-    def map(self, fn: Callable[[T], U]) -> Ok[U, E]:
+    def map(self, fn: Callable[[T_co], U]) -> Ok[U]:
         """Transform the success value, panicking if the callback fails."""
         return _try_or_panic(lambda: Ok(fn(self.value)), "map callback threw")
 
-    def map_error(self, _fn: Callable[[Never], E2]) -> Ok[T, E2]:
+    def map_error(self, _fn: Callable[[Never], E2]) -> Ok[T_co]:
         """No-op on Ok; the error type changes only at the type level."""
-        return cast("Ok[T, E2]", self)
+        return self
 
     @overload
-    def try_recover(self, _fn: Callable[[Never], Ok[U, E2]]) -> Ok[T, E2]: ...
+    def try_recover(self, _fn: Callable[[Never], Ok[U]]) -> Ok[T_co]: ...
 
     @overload
-    def try_recover(self, _fn: Callable[[Never], Err[U, E2]]) -> Ok[T, E2]: ...
+    def try_recover(self, _fn: Callable[[Never], Err[E2]]) -> Ok[T_co]: ...
 
     @overload
-    def try_recover(self, _fn: Callable[[Never], Result[U, E2]]) -> Ok[T, E2]: ...
+    def try_recover(self, _fn: Callable[[Never], Result[U, E2]]) -> Ok[T_co]: ...
 
-    def try_recover(self, _fn: Callable[[Never], Result[U, E2]]) -> Ok[T, E2]:
+    def try_recover(self, _fn: Callable[[Never], Result[U, E2]]) -> Ok[T_co]:
         """No-op on Ok; never invokes the recovery callback."""
-        return cast("Ok[T, E2]", self)
+        return self
 
     async def try_recover_async(
         self,
         _fn: Callable[[Never], Awaitable[Result[U, E2]]],
-    ) -> Ok[T, E2]:
+    ) -> Ok[T_co]:
         """Async no-op on Ok; never invokes the recovery callback."""
-        return cast("Ok[T, E2]", self)
+        return self
 
-    def and_then(self, fn: Callable[[T], Result[U, E2]]) -> Result[U, E | E2]:
+    def and_then(self, fn: Callable[[T_co], Result[U, E2]]) -> Result[U, E2]:
         """Run and validate a Result-returning callback on success."""
 
         def callback() -> Result[U, E2]:
@@ -283,14 +286,12 @@ class Ok[T, E]:
                 ),
             )
 
-        return cast(
-            "Result[U, E | E2]", _try_or_panic(callback, "and_then callback threw")
-        )
+        return _try_or_panic(callback, "and_then callback threw")
 
     async def and_then_async(
         self,
-        fn: Callable[[T], Awaitable[Result[U, E2]]],
-    ) -> Result[U, E | E2]:
+        fn: Callable[[T_co], Awaitable[Result[U, E2]]],
+    ) -> Result[U, E2]:
         """Async version of :meth:`and_then` with Result validation."""
 
         async def callback() -> Result[U, E2]:
@@ -302,70 +303,69 @@ class Ok[T, E]:
                 ),
             )
 
-        return cast(
-            "Result[U, E | E2]",
-            await _try_or_panic_async(callback, "and_then_async callback threw"),
-        )
+        return await _try_or_panic_async(callback, "and_then_async callback threw")
 
     @overload
-    def match(self, handlers: ResultHandlers[T, Never, U]) -> U: ...
+    def match(self, handlers: ResultHandlers[T_co, Never, U]) -> U: ...
 
     @overload
     def match(self, handlers: Handlers[U]) -> U: ...
 
-    def match(self, handlers: ResultHandlers[T, Never, U] | Handlers[U]) -> U:
+    def match(self, handlers: ResultHandlers[T_co, Never, U] | Handlers[U]) -> U:
         """Call the ``ok`` branch of a pair of match handlers."""
-        handler = cast("Callable[[T], U]", handlers["ok"])
+        handler = cast("Callable[[T_co], U]", handlers["ok"])
         return _try_or_panic(lambda: handler(self.value), "match ok handler threw")
 
-    def unwrap(self, _message: str | None = None) -> T:
+    def unwrap(self, _message: str | None = None) -> T_co:
         """Extract the success value."""
         return self.value
 
-    def unwrap_or(self, _fallback: U) -> T:
+    def unwrap_or(self, _fallback: U) -> T_co:
         """Extract the value, ignoring the fallback."""
         return self.value
 
-    def tap(self, fn: Callable[[T], object]) -> Ok[T, E]:
+    def tap(self, fn: Callable[[T_co], object]) -> Ok[T_co]:
         """Run a success side effect and return this result."""
 
-        def callback() -> Ok[T, E]:
+        def callback() -> Ok[T_co]:
             fn(self.value)
             return self
 
         return _try_or_panic(callback, "tap callback threw")
 
-    async def tap_async(self, fn: Callable[[T], Awaitable[object]]) -> Ok[T, E]:
+    async def tap_async(self, fn: Callable[[T_co], Awaitable[object]]) -> Ok[T_co]:
         """Run an async success side effect and return this result."""
 
-        async def callback() -> Ok[T, E]:
+        async def callback() -> Ok[T_co]:
             await fn(self.value)
             return self
 
         return await _try_or_panic_async(callback, "tap_async callback threw")
 
-    def tap_error(self, _fn: Callable[[Never], object]) -> Ok[T, E]:
+    def tap_error(self, _fn: Callable[[Never], object]) -> Ok[T_co]:
         """No-op on Ok."""
         return self
 
     async def tap_error_async(
         self,
         _fn: Callable[[Never], Awaitable[object]],
-    ) -> Ok[T, E]:
+    ) -> Ok[T_co]:
         """Async no-op on Ok."""
         return self
 
     @overload
-    def tap_both(self, handlers: TapHandlers[T, Never]) -> Ok[T, E]: ...
+    def tap_both(self, handlers: TapHandlers[T_co, Never]) -> Ok[T_co]: ...
 
     @overload
-    def tap_both(self, handlers: Handlers[object]) -> Ok[T, E]: ...
+    def tap_both(self, handlers: Handlers[object]) -> Ok[T_co]: ...
 
-    def tap_both(self, handlers: TapHandlers[T, Never] | Handlers[object]) -> Ok[T, E]:
+    def tap_both(
+        self, handlers: TapHandlers[T_co, Never] | Handlers[object]
+    ) -> Ok[T_co]:
         """Run only the ``ok`` side effect and return this result."""
-        handler = cast("Callable[[T], object]", handlers["ok"])
+        handler = cast("Callable[[T_co], object]", handlers["ok"])
 
-        def callback() -> Ok[T, E]:
+        def callback() -> Ok[T_co]:
             handler(self.value)
             return self
 
@@ -374,44 +374,44 @@ class Ok[T, E]:
     @overload
     async def tap_both_async(
         self,
-        handlers: AsyncTapHandlers[T, Never],
-    ) -> Ok[T, E]: ...
+        handlers: AsyncTapHandlers[T_co, Never],
+    ) -> Ok[T_co]: ...
 
     @overload
     async def tap_both_async(
         self,
         handlers: Handlers[Awaitable[object]],
-    ) -> Ok[T, E]: ...
+    ) -> Ok[T_co]: ...
 
     async def tap_both_async(
         self,
-        handlers: AsyncTapHandlers[T, Never] | Handlers[Awaitable[object]],
-    ) -> Ok[T, E]:
+        handlers: AsyncTapHandlers[T_co, Never] | Handlers[Awaitable[object]],
+    ) -> Ok[T_co]:
         """Async version of :meth:`tap_both`."""
-        handler = cast("Callable[[T], Awaitable[object]]", handlers["ok"])
+        handler = cast("Callable[[T_co], Awaitable[object]]", handlers["ok"])
 
-        async def callback() -> Ok[T, E]:
+        async def callback() -> Ok[T_co]:
             await handler(self.value)
             return self
 
         return await _try_or_panic_async(callback, "tap_both_async ok callback threw")
 
-    def __iter__(self) -> Generator[object, None, T]:
+    def __iter__(self) -> Generator[object, None, T_co]:
         """Return the value through ``yield from`` without yielding it."""
         if False:  # Make this a generator so StopIteration carries the value.
             yield self.value
         return self.value
 
 
-class Err[T, E]:
+class Err(Generic[E_co]):  # noqa: UP046
     """Failed immutable Result variant."""
 
     __slots__ = ("error",)
     __hash__ = None
     status: ClassVar[Literal["error"]] = "error"
-    error: E
+    error: E_co
 
-    def __init__(self, error: E) -> None:
+    def __init__(self, error: E_co) -> None:
         object.__setattr__(self, "error", error)
 
     @override
@@ -436,15 +436,15 @@ class Err[T, E]:
     def is_err(self) -> bool:
         return True
 
-    def map(self, _fn: Callable[[Never], U]) -> Err[U, E]:
+    def map(self, _fn: Callable[[Never], U]) -> Err[E_co]:
         """No-op on Err; the success type changes only at the type level."""
-        return cast("Err[U, E]", self)
+        return self
 
-    def map_error(self, fn: Callable[[E], E2]) -> Err[T, E2]:
+    def map_error(self, fn: Callable[[E_co], E2]) -> Err[E2]:
         """Transform the error value, panicking if the callback fails."""
         return _try_or_panic(lambda: Err(fn(self.error)), "map_error callback threw")
 
-    def try_recover(self, fn: Callable[[E], Result[U, E2]]) -> Result[U, E2]:
+    def try_recover(self, fn: Callable[[E_co], Result[U, E2]]) -> Result[U, E2]:
         """Attempt and validate recovery through a Result callback."""
 
         def callback() -> Result[U, E2]:
@@ -460,7 +460,7 @@ class Err[T, E]:
 
     async def try_recover_async(
         self,
-        fn: Callable[[E], Awaitable[Result[U, E2]]],
+        fn: Callable[[E_co], Awaitable[Result[U, E2]]],
     ) -> Result[U, E2]:
         """Async version of :meth:`try_recover` with Result validation."""
 
@@ -475,26 +475,26 @@ class Err[T, E]:
 
         return await _try_or_panic_async(callback, "try_recover_async callback threw")
 
-    def and_then(self, _fn: Callable[[Never], Result[U, E2]]) -> Err[U, E | E2]:
+    def and_then(self, _fn: Callable[[Never], Result[U, E2]]) -> Result[U, E_co | E2]:
         """No-op on Err; never invokes the callback."""
-        return cast("Err[U, E | E2]", self)
+        return self
 
     async def and_then_async(
         self,
         _fn: Callable[[Never], Awaitable[Result[U, E2]]],
-    ) -> Err[U, E | E2]:
+    ) -> Result[U, E_co | E2]:
         """Async no-op on Err; never invokes the callback."""
-        return cast("Err[U, E | E2]", self)
+        return self
 
     @overload
-    def match(self, handlers: ResultHandlers[Never, E, U]) -> U: ...
+    def match(self, handlers: ResultHandlers[Never, E_co, U]) -> U: ...
 
     @overload
     def match(self, handlers: Handlers[U]) -> U: ...
 
-    def match(self, handlers: ResultHandlers[Never, E, U] | Handlers[U]) -> U:
+    def match(self, handlers: ResultHandlers[Never, E_co, U] | Handlers[U]) -> U:
         """Call the ``err`` branch of a pair of match handlers."""
-        handler = cast("Callable[[E], U]", handlers["err"])
+        handler = cast("Callable[[E_co], U]", handlers["err"])
         return _try_or_panic(lambda: handler(self.error), "match err handler threw")
 
     def unwrap(self, message: str | None = None) -> Never:
@@ -504,47 +504,51 @@ class Err[T, E]:
             self.error,
         )
 
-    def unwrap_or(self, fallback: U) -> T | U:
+    def unwrap_or(self, fallback: U) -> U:
         """Return the fallback value."""
         return fallback
 
-    def tap(self, _fn: Callable[[Never], object]) -> Err[T, E]:
+    def tap(self, _fn: Callable[[Never], object]) -> Err[E_co]:
         """No-op on Err."""
         return self
 
-    def tap_error(self, fn: Callable[[E], object]) -> Err[T, E]:
+    def tap_error(self, fn: Callable[[E_co], object]) -> Err[E_co]:
         """Run an error side effect and return this result."""
 
-        def callback() -> Err[T, E]:
+        def callback() -> Err[E_co]:
             fn(self.error)
             return self
 
         return _try_or_panic(callback, "tap_error callback threw")
 
-    async def tap_async(self, _fn: Callable[[Never], Awaitable[object]]) -> Err[T, E]:
+    async def tap_async(self, _fn: Callable[[Never], Awaitable[object]]) -> Err[E_co]:
         """Async no-op on Err."""
         return self
 
-    async def tap_error_async(self, fn: Callable[[E], Awaitable[object]]) -> Err[T, E]:
+    async def tap_error_async(
+        self, fn: Callable[[E_co], Awaitable[object]]
+    ) -> Err[E_co]:
         """Run an async error side effect and return this result."""
 
-        async def callback() -> Err[T, E]:
+        async def callback() -> Err[E_co]:
             await fn(self.error)
             return self
 
         return await _try_or_panic_async(callback, "tap_error_async callback threw")
 
     @overload
-    def tap_both(self, handlers: TapHandlers[Never, E]) -> Err[T, E]: ...
+    def tap_both(self, handlers: TapHandlers[Never, E_co]) -> Err[E_co]: ...
 
     @overload
-    def tap_both(self, handlers: Handlers[object]) -> Err[T, E]: ...
+    def tap_both(self, handlers: Handlers[object]) -> Err[E_co]: ...
 
-    def tap_both(self, handlers: TapHandlers[Never, E] | Handlers[object]) -> Err[T, E]:
+    def tap_both(
+        self, handlers: TapHandlers[Never, E_co] | Handlers[object]
+    ) -> Err[E_co]:
         """Run only the ``err`` side effect and return this result."""
-        handler = cast("Callable[[E], object]", handlers["err"])
+        handler = cast("Callable[[E_co], object]", handlers["err"])
 
-        def callback() -> Err[T, E]:
+        def callback() -> Err[E_co]:
             handler(self.error)
             return self
 
@@ -553,39 +557,39 @@ class Err[T, E]:
     @overload
     async def tap_both_async(
         self,
-        handlers: AsyncTapHandlers[Never, E],
-    ) -> Err[T, E]: ...
+        handlers: AsyncTapHandlers[Never, E_co],
+    ) -> Err[E_co]: ...
 
     @overload
     async def tap_both_async(
         self,
         handlers: Handlers[Awaitable[object]],
-    ) -> Err[T, E]: ...
+    ) -> Err[E_co]: ...
 
     async def tap_both_async(
         self,
-        handlers: AsyncTapHandlers[Never, E] | Handlers[Awaitable[object]],
-    ) -> Err[T, E]:
+        handlers: AsyncTapHandlers[Never, E_co] | Handlers[Awaitable[object]],
+    ) -> Err[E_co]:
         """Async version of :meth:`tap_both`."""
-        handler = cast("Callable[[E], Awaitable[object]]", handlers["err"])
+        handler = cast("Callable[[E_co], Awaitable[object]]", handlers["err"])
 
-        async def callback() -> Err[T, E]:
+        async def callback() -> Err[E_co]:
             await handler(self.error)
             return self
 
         return await _try_or_panic_async(callback, "tap_both_async err callback threw")
 
-    def __iter__(self) -> Generator[Err[Never, E], None, Never]:
+    def __iter__(self) -> Generator[Err[E_co], None, Never]:
         """Yield this Err once, then panic if iteration continues."""
-        yield cast("Err[Never, E]", self)
+        yield self
         panic(
             "Unreachable: Err yielded in Result.gen but generator continued",
             self.error,
         )
 
 
-type Result[A, E] = Ok[A, E] | Err[A, E]
-type AnyResult = Ok[object, object] | Err[object, object]
+type Result[A, E] = Ok[A] | Err[E]
+type AnyResult = Ok[object] | Err[object]
 
 
 def _require_result(value: object, message: str) -> Result[object, object]:
@@ -596,34 +600,34 @@ def _require_result(value: object, message: str) -> Result[object, object]:
 
 
 @overload
-def ok() -> Ok[None, Never]: ...
+def ok() -> Ok[None]: ...
 
 
 @overload
-def ok[A](value: A) -> Ok[A, Never]: ...
+def ok[A](value: A) -> Ok[A]: ...
 
 
-def ok[A](value: A | None = None) -> Ok[A | None, Never]:
+def ok[A](value: A | None = None) -> Ok[A | None]:
     """Construct an Ok result; ``ok()`` stores ``None``."""
     return Ok(value)
 
 
-def err[E](error: E) -> Err[Never, E]:
+def err[E](error: E) -> Err[E]:
     """Construct an Err result."""
-    return Err[Never, E](error)
+    return Err(error)
 
 
-def is_ok[A, E](result: Result[A, E]) -> TypeGuard[Ok[A, E]]:
+def is_ok[A, E](result: Result[A, E]) -> TypeGuard[Ok[A]]:
     """Return whether a result is Ok."""
     return isinstance(result, Ok)
 
 
-def is_err[A, E](result: Result[A, E]) -> TypeGuard[Err[A, E]]:
+def is_err[A, E](result: Result[A, E]) -> TypeGuard[Err[E]]:
     """Return whether a result is Err."""
     return isinstance(result, Err)
 
 
-def is_error[A, E](result: Result[A, E]) -> TypeGuard[Err[A, E]]:
+def is_error[A, E](result: Result[A, E]) -> TypeGuard[Err[E]]:
     """Alias for :func:`is_err` matching the TypeScript status vocabulary."""
     return is_err(result)
 

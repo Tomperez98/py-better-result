@@ -104,9 +104,9 @@ def test_result_combinators_support_data_first_and_data_last_forms() -> None:
 
 def test_result_observers_and_collectors_preserve_order() -> None:
     results: list[Result[int, str]] = [
-        Ok[int, str](1),
-        Err[int, str]("bad"),
-        Ok[int, str](2),
+        Ok(1),
+        Err("bad"),
+        Ok(2),
     ]
     seen: list[int] = []
 
@@ -133,12 +133,13 @@ def test_flatten_collapses_both_nested_variants() -> None:
     flattened_inner_error = flatten(ok(err("inner")))
     assert isinstance(flattened_inner_error, Err)
     assert flattened_inner_error.error == "inner"
-    flattened_outer_error = flatten(Err[Result[int, str], str]("outer"))
+    flattened_outer_error = flatten(Err("outer"))
     assert isinstance(flattened_outer_error, Err)
     assert flattened_outer_error.error == "outer"
 
 
 def test_result_utility_types_are_inferred() -> None:
-    success = ok(2)
-    assert_type(map_result(success, str), Result[str, Never])
-    assert_type(all_results([ok(1), ok(2)]), Result[list[int], Never])
+    success: Result[int, Never] = ok(2)
+    assert_type(success.map(str), Ok[str])
+    successes: list[Result[int, Never]] = [ok(1), ok(2)]
+    assert_type(all_results(successes), Result[list[int], Never])

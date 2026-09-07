@@ -386,7 +386,7 @@ async def test_async_result_wrapper_forms_and_type_errors() -> None:
     async def async_identity(value: object) -> object:
         return await _completed(value)
 
-    def return_result(value: object) -> Ok[object, Any]:
+    def return_result(value: object) -> Ok[object]:
         return ok(value)
 
     runtime_map = cast("Any", map_result)
@@ -487,13 +487,13 @@ async def test_async_result_wrapper_forms_and_type_errors() -> None:
 
 @pytest.mark.asyncio
 async def test_all_async_cancels_for_cancelled_and_panic_inputs() -> None:
-    async def cancelled() -> Ok[int, str]:
+    async def cancelled() -> Ok[int]:
         raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
         await all_results_async([cancelled()])
 
-    async def panicking() -> Ok[int, str]:
+    async def panicking() -> Ok[int]:
         raise Panic("input panic")
 
     with pytest.raises(Panic, match="input panic"):

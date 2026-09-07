@@ -99,8 +99,8 @@ def _finish_validation[T, U, E](
     make_error: Callable[[T, Sequence[ResultCodecIssue]], E],
 ) -> Result[U, E]:
     if isinstance(validation, SchemaFailure):
-        return Err[U, E](make_error(original, validation.issues))
-    return Ok[U, E](validation)
+        return Err(make_error(original, validation.issues))
+    return Ok(validation)
 
 
 def _run_validation[T, U, E](
@@ -187,15 +187,12 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
                 resolved: Result[OkWire, ResultSerializationError],
             ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
                 if isinstance(resolved, Err):
-                    return Err[
-                        SerializedResult[OkWire, ErrWire],
-                        ResultSerializationError,
-                    ](resolved.error)
+                    return Err(resolved.error)
                 envelope: SerializedOk[OkWire] = {
                     "status": "ok",
                     "value": resolved.value,
                 }
-                return Ok[SerializedResult[OkWire, ErrWire], ResultSerializationError](
+                return Ok(
                     envelope,
                 )
 
@@ -212,14 +209,14 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             resolved: Result[ErrWire, ResultSerializationError],
         ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
             if isinstance(resolved, Err):
-                return Err[SerializedResult[OkWire, ErrWire], ResultSerializationError](
+                return Err(
                     resolved.error,
                 )
             envelope: SerializedErr[ErrWire] = {
                 "status": "error",
                 "error": resolved.value,
             }
-            return Ok[SerializedResult[OkWire, ErrWire], ResultSerializationError](
+            return Ok(
                 envelope,
             )
 
@@ -249,7 +246,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         | Awaitable[Result[OkOutput, ErrOutput | ResultDeserializationError]]
     ):
         if not _is_envelope(value):
-            return Err[OkOutput, ErrOutput | ResultDeserializationError](
+            return Err(
                 ResultDeserializationError(value),
             )
         assert isinstance(value, Mapping)
@@ -265,10 +262,10 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
                 resolved: Result[OkOutput, ResultDeserializationError],
             ) -> Result[OkOutput, ErrOutput | ResultDeserializationError]:
                 if isinstance(resolved, Err):
-                    return Err[OkOutput, ErrOutput | ResultDeserializationError](
+                    return Err(
                         resolved.error,
                     )
-                return Ok[OkOutput, ErrOutput | ResultDeserializationError](
+                return Ok(
                     resolved.value,
                 )
 
@@ -285,10 +282,10 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             resolved: Result[ErrOutput, ResultDeserializationError],
         ) -> Result[OkOutput, ErrOutput | ResultDeserializationError]:
             if isinstance(resolved, Err):
-                return Err[OkOutput, ErrOutput | ResultDeserializationError](
+                return Err(
                     resolved.error,
                 )
-            return Err[OkOutput, ErrOutput | ResultDeserializationError](resolved.value)
+            return Err(resolved.value)
 
         return _map_operation(operation, finish_err)
 
@@ -336,10 +333,10 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             resolved: Result[OkOutput, ErrOutput | ResultDeserializationError],
         ) -> Result[OkOutput, ErrOutput]:
             if isinstance(resolved, Ok):
-                return Ok[OkOutput, ErrOutput](resolved.value)
+                return Ok(resolved.value)
             if isinstance(resolved.error, ResultDeserializationError):
                 return resolved.unwrap("Result.codec deserialize_unsafe failed")
-            return Err[OkOutput, ErrOutput](resolved.error)
+            return Err(resolved.error)
 
         return _map_operation(operation, preserve_domain_result)
 

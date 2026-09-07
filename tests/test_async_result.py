@@ -173,7 +173,7 @@ async def test_all_async_cancels_siblings_when_an_input_rejects() -> None:
         except asyncio.CancelledError:
             cancelled.set()
             raise
-        return Ok[int, str](1)
+        return Ok(1)
 
     with pytest.raises(Panic, match="input awaitable rejected"):
         await all_results_async([rejected(), sibling()])

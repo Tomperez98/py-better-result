@@ -7,7 +7,6 @@ from typing import assert_type
 
 import pytest
 
-from better_result.combinators import and_then_async
 from better_result.core import Err, Ok, Result, err
 from better_result.error import TaggedError
 
@@ -60,7 +59,7 @@ def parse_amount(raw: str) -> Result[int, InvalidAmount]:
         return err(InvalidAmount(raw))
     if amount <= 0:
         return err(InvalidAmount(raw))
-    return Ok[int, InvalidAmount](amount)
+    return Ok(amount)
 
 
 def checkout(
@@ -76,15 +75,15 @@ def checkout(
     def authorize(amount: int) -> Result[int, InsufficientFunds]:
         events.append("authorize")
         if amount > balance:
-            return Err[int, InsufficientFunds](InsufficientFunds(amount, balance))
-        return Ok[int, InsufficientFunds](amount)
+            return Err(InsufficientFunds(amount, balance))
+        return Ok(amount)
 
     def charge(amount: int) -> Result[Receipt, GatewayUnavailable]:
         channel = "card" if amount <= 100 else "bank"
         events.append(f"charge:{channel}")
         if not gateway_available:
-            return Err[Receipt, GatewayUnavailable](GatewayUnavailable(channel))
-        return Ok[Receipt, GatewayUnavailable](Receipt(amount, channel))
+            return Err(GatewayUnavailable(channel))
+        return Ok(Receipt(amount, channel))
 
     return parse_amount(raw_amount).and_then(authorize).and_then(charge)
 
@@ -103,18 +102,21 @@ async def checkout_async(
     async def authorize(amount: int) -> Result[int, CheckoutError]:
         events.append("authorize")
         if amount > balance:
-            return Err[int, CheckoutError](InsufficientFunds(amount, balance))
-        return Ok[int, CheckoutError](amount)
+            return Err(InsufficientFunds(amount, balance))
+        return Ok(amount)
 
     async def charge(amount: int) -> Result[Receipt, CheckoutError]:
         channel = "card" if amount <= 100 else "bank"
         events.append(f"charge:{channel}")
         if not gateway_available:
-            return Err[Receipt, CheckoutError](GatewayUnavailable(channel))
-        return Ok[Receipt, CheckoutError](Receipt(amount, channel))
+            return Err(GatewayUnavailable(channel))
+        return Ok(Receipt(amount, channel))
 
-    authorized = await and_then_async(parsed, authorize)
-    return await and_then_async(authorized, charge)
+    authorized = await parsed.and_then_async(authorize)
+    assert_type(authorized, Result[int, InvalidAmount | CheckoutError])
+    charged = await authorized.and_then_async(charge)
+    assert_type(charged, Result[Receipt, InvalidAmount | CheckoutError])
+    return charged
 
 
 def test_and_then_composes_success_and_value_based_branches() -> None:
@@ -152,6 +154,36 @@ def test_and_then_short_circuits_each_expected_error() -> None:
     assert isinstance(gateway.error, GatewayUnavailable)
     assert gateway.error.channel == "bank"
     assert gateway_trace == ["authorize", "charge:bank"]
+
+
+@pytest.mark.asyncio
+async def test_and_then_async_preserves_the_full_error_union() -> None:
+    async def authorize(amount: int) -> Result[int, InsufficientFunds]:
+        return Ok(amount)
+
+    async def charge(amount: int) -> Result[Receipt, GatewayUnavailable]:
+        return Ok(Receipt(amount, "card"))
+
+    async def authorize_chain(
+        result: Result[int, InvalidAmount],
+    ) -> Result[int, InvalidAmount | InsufficientFunds]:
+        return await result.and_then_async(authorize)
+
+    async def charge_chain(
+        result: Result[int, InvalidAmount | InsufficientFunds],
+    ) -> Result[Receipt, InvalidAmount | InsufficientFunds | GatewayUnavailable]:
+        return await result.and_then_async(charge)
+
+    initial: Result[int, InvalidAmount] = Ok(5)
+    authorized = await authorize_chain(initial)
+    assert_type(authorized, Result[int, InvalidAmount | InsufficientFunds])
+    charged = await charge_chain(authorized)
+    assert_type(
+        charged,
+        Result[Receipt, InvalidAmount | InsufficientFunds | GatewayUnavailable],
+    )
+    assert isinstance(charged, Ok)
+    assert charged.value == Receipt(5, "card")
 
 
 @pytest.mark.asyncio

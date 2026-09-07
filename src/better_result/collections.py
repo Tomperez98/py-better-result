@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from typing import TYPE_CHECKING, cast, overload
+from typing import TYPE_CHECKING, Never, cast, overload
 
 from .core import Err, Ok, Panic, Result, _require_result
 
@@ -18,9 +18,9 @@ def all_results[A, E](results: Iterable[Result[A, E]]) -> Result[list[A], E]:
     for result in results:
         checked = _require_result(result, "Result.all input must be a Result")
         if isinstance(checked, Err):
-            return Err[list[A], E](cast("E", checked.error))
+            return Err(cast("E", checked.error))
         values.append(cast("A", checked.value))
-    return Ok[list[A], E](values)
+    return Ok(values)
 
 
 async def _await_results[A, E](
@@ -96,15 +96,15 @@ async def partition_async[A, E](
 
 
 @overload
-def flatten[A, E, E2](result: Ok[Ok[A, E], E2]) -> Result[A, E | E2]: ...
+def flatten[A](result: Ok[Ok[A]]) -> Result[A, Never]: ...
 
 
 @overload
-def flatten[A, E, E2](result: Ok[Err[A, E], E2]) -> Result[A, E | E2]: ...
+def flatten[E](result: Ok[Err[E]]) -> Result[Never, E]: ...
 
 
 @overload
-def flatten[A, E, E2](result: Err[Result[A, E], E2]) -> Result[A, E | E2]: ...
+def flatten[E2](result: Err[E2]) -> Result[Never, E2]: ...
 
 
 @overload
@@ -121,6 +121,6 @@ def flatten[A, E, E2](result: Result[Result[A, E], E2]) -> Result[A, E | E2]:
             "Result.flatten nested input must be a Result",
         )
         if isinstance(nested_result, Ok):
-            return Ok[A, E | E2](cast("A", nested_result.value))
-        return Err[A, E | E2](cast("E", nested_result.error))
-    return Err[A, E | E2](cast("E2", checked.error))
+            return Ok(cast("A", nested_result.value))
+        return Err(cast("E", nested_result.error))
+    return Err(cast("E2", checked.error))

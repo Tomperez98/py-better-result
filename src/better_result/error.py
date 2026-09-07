@@ -131,7 +131,7 @@ class TaggedError(Exception):
         """Exhaustively dispatch to the handler for this error's tag."""
         return match_error(self, handlers)
 
-    def __iter__(self) -> Generator[Err[Never, TaggedError], None, Never]:
+    def __iter__(self) -> Generator[Err[TaggedError], None, Never]:
         """Yield this error as an Err, then panic if iteration continues."""
         yield err(self)
         panic("Unreachable: Err yielded in TaggedError but generator continued", self)

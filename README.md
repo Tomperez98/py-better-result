@@ -33,7 +33,7 @@ else:
     print(result.error)
 ```
 
-`Ok` and `Err` are immutable result containers. Their payloads remain ordinary Python references, so a mutable payload can still be mutated by its owner.
+`Ok` and `Err` are immutable result containers. Their concrete types describe only the payload they store: `Ok[T]` contains a success value and `Err[E]` contains an error value. Annotate the surrounding `Result[A, E]` when both branches need a complete type. Their payloads remain ordinary Python references, so a mutable payload can still be mutated by its owner.
 
 The package follows one failure rule:
 

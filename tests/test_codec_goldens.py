@@ -147,7 +147,7 @@ def test_tagged_error_tags_properties_causes_and_traces_match_golden() -> None:
     expected = cast("dict[str, object]", _golden_json("tagged-errors.json"))
 
     for name, error in examples.items():
-        encoded = result_codec.serialize(Err[Mapping[str, object], TaggedError](error))
+        encoded = result_codec.serialize(Err(error))
         assert isinstance(encoded, Ok)
         assert _trace_count(encoded.value) == (
             1 if name != "service-unavailable" else 2
@@ -160,7 +160,7 @@ def test_rich_ok_payload_and_inbound_tagged_errors_match_golden() -> None:
     rich_payload = cast("dict[str, object]", _golden_json("rich-ok-payload.json"))
 
     encoded = result_codec.serialize(
-        Ok[Mapping[str, object], TaggedError](rich_payload),
+        Ok(rich_payload),
     )
     assert isinstance(encoded, Ok)
     assert encoded.value == _golden_json("rich-ok-envelope.json")
@@ -208,7 +208,7 @@ async def test_async_rich_codec_uses_the_same_tagged_protocol_goldens() -> None:
     error = ServiceUnavailable("billing", TimeoutError("upstream timed out"))
 
     encoded = await result_codec.serialize_async(
-        Err[dict[str, object], TaggedError](error),
+        Err(error),
     )
     assert isinstance(encoded, Ok)
     assert (

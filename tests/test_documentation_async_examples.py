@@ -10,7 +10,7 @@ from typing import Never
 import pytest
 
 from better_result.collections import all_results_async, partition_async
-from better_result.combinators import and_then, and_then_async
+from better_result.combinators import and_then_async
 from better_result.core import Err, Ok, Panic, Result, err, ok
 from better_result.error import TaggedError
 from better_result.retry import AsyncRetryConfig, TryAsyncContext, try_async
@@ -67,9 +67,9 @@ def parse_json_value(text: str) -> object:
 
 async def parse_json(text: str) -> Result[object, ParseError]:
     try:
-        return Ok[object, ParseError](parse_json_value(text))
+        return Ok(parse_json_value(text))
     except json.JSONDecodeError as cause:
-        return Err[object, ParseError](ParseError(cause))
+        return Err(ParseError(cause))
 
 
 async def fetch_response(
@@ -92,29 +92,26 @@ async def get_user_profile(
 ) -> Result[dict[str, object], TaggedError]:
     fetched = await fetch_response(response, response.url)
     if isinstance(fetched, Err):
-        return Err[dict[str, object], TaggedError](fetched.error)
+        return Err(fetched.error)
 
-    checked = and_then(
-        fetched,
-        lambda selected: (
-            ok(selected)
-            if selected.ok
-            else Err[Response, HttpResponseError](
-                HttpResponseError(selected.status, selected.url),
-            )
-        ),
-    )
+    def check_response(selected: Response) -> Result[Response, HttpResponseError]:
+        if selected.ok:
+            return ok(selected)
+        return Err(HttpResponseError(selected.status, selected.url))
+
+    checked = fetched.and_then(check_response)
     if isinstance(checked, Err):
-        return Err[dict[str, object], TaggedError](checked.error)
+        return Err(checked.error)
 
     parsed = await parse_json(checked.value.body)
     if isinstance(parsed, Err):
-        return Err[dict[str, object], TaggedError](parsed.error)
+        return Err(parsed.error)
     if not isinstance(parsed.value, dict):
-        return Err[dict[str, object], TaggedError](
-            ParseError(TypeError("object expected")),
-        )
-    return Ok[dict[str, object], TaggedError](parsed.value)
+        return Err(ParseError(TypeError("object expected")))
+    profile: dict[str, object] = {
+        key: value for key, value in parsed.value.items() if isinstance(key, str)
+    }
+    return Ok(profile)
 
 
 @pytest.mark.asyncio
@@ -143,9 +140,11 @@ async def test_async_workflow_uses_await_and_explicit_short_circuiting() -> None
 async def test_async_combinator_pipeline_matches_promise_result_examples() -> None:
     async def fetch_posts(user: dict[str, object]) -> Result[list[str], NetworkError]:
         user_id = user["id"]
-        return Ok[list[str], NetworkError]([f"post-for-{user_id}"])
+        return Ok([f"post-for-{user_id}"])
 
-    user = Ok[dict[str, object], NetworkError]({"id": 1, "name": "Alice"})
+    user: Result[dict[str, object], NetworkError] = Ok(
+        {"id": 1, "name": "Alice"},
+    )
     result = await and_then_async(user, fetch_posts)
     assert isinstance(result, Ok)
     assert result.value == ["post-for-1"]

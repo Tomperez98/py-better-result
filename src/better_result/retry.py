@@ -104,14 +104,14 @@ def try_result[A, E](
 
     def execute(context: TryContext) -> Result[A, E | UnhandledException]:
         try:
-            return Ok[A, E | UnhandledException](operation(context))
+            return Ok(operation(context))
         except Panic:
             raise
         except Exception as cause:
             if catch is None:
-                return Err[A, E | UnhandledException](UnhandledException(cause))
+                return Err(UnhandledException(cause))
             try:
-                return Err[A, E | UnhandledException](catch(cause))
+                return Err(catch(cause))
             except Panic:
                 raise
             except Exception as catch_error:
@@ -222,16 +222,17 @@ async def try_async[A, E](
 
     async def execute(context: TryAsyncContext) -> Result[A, E | UnhandledException]:
         try:
-            return Ok[A, E | UnhandledException](await operation(context))
+            return Ok(await operation(context))
         except asyncio.CancelledError:
             raise
         except Panic:
             raise
         except Exception as cause:
             if catch is None:
-                return Err[A, E | UnhandledException](UnhandledException(cause))
+                return Err(UnhandledException(cause))
             try:
-                return Err[A, E | UnhandledException](await _await_value(catch(cause)))
+                handled_error: E = await _await_value(catch(cause))
+                return Err(handled_error)
             except asyncio.CancelledError:
                 raise
             except Panic:

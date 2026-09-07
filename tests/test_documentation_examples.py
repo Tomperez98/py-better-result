@@ -84,18 +84,18 @@ class GuestUser:
 def read_env(environment: Mapping[str, str], name: str) -> Result[str, MissingEnv]:
     value = environment.get(name)
     if value is None:
-        return Err[str, MissingEnv](MissingEnv(name))
-    return Ok[str, MissingEnv](value)
+        return Err(MissingEnv(name))
+    return Ok(value)
 
 
 def parse_port(input_value: str) -> Result[int, InvalidPort]:
     try:
         port = int(input_value)
     except ValueError:
-        return Err[int, InvalidPort](InvalidPort(input_value))
+        return Err(InvalidPort(input_value))
     if not 1 <= port <= 65_535:
-        return Err[int, InvalidPort](InvalidPort(input_value))
-    return Ok[int, InvalidPort](port)
+        return Err(InvalidPort(input_value))
+    return Ok(port)
 
 
 def read_server_address(
@@ -171,16 +171,16 @@ def test_creating_results_wraps_sync_exceptions_and_customizes_errors() -> None:
     assert failed.error.input == "not json"
     assert isinstance(failed.error.cause, json.JSONDecodeError)
 
-    ok_result = Ok[int, str](42)
+    ok_result = Ok(42)
     assert ok_result.status == "ok"
     assert ok_result.value == 42
-    failure = Err[int, str]("Something went wrong")
+    failure = Err("Something went wrong")
     assert failure.status == "error"
     assert failure.error == "Something went wrong"
 
 
 def test_narrowing_and_matching_examples() -> None:
-    result: Result[int, str] = Ok[int, str](42)
+    result: Result[int, str] = Ok(42)
 
     if result.status == "ok":
         assert result.value == 42
@@ -205,77 +205,73 @@ def test_narrowing_and_matching_examples() -> None:
 
 
 def test_transforming_chaining_recovery_and_data_last_forms() -> None:
-    parsed: Result[int, InvalidInput] = Ok[int, InvalidInput](21)
+    parsed: Result[int, InvalidInput] = Ok(21)
     doubled = map_result(parsed, lambda value: value * 2)
     assert isinstance(doubled, Ok)
     assert doubled.value == 42
 
-    failure: Result[int, InvalidInput] = Err[int, InvalidInput](InvalidInput("x"))
+    failure: Result[int, InvalidInput] = Err(InvalidInput("x"))
     translated = map_error(failure, LoadUserFailed)
     assert isinstance(translated, Err)
     assert isinstance(translated.error, LoadUserFailed)
 
     chained = and_then(
         parsed,
-        lambda value: (
-            Ok[str, ValidationError](str(value))
-            if value > 0
-            else Err[str, ValidationError](ValidationError("value"))
-        ),
+        lambda value: Ok(str(value)) if value > 0 else Err(ValidationError("value")),
     )
     assert isinstance(chained, Ok)
     assert chained.value == "21"
 
     recovered = try_recover(
-        Err[int, NotFound](NotFound("missing")),
-        lambda _error: Ok[GuestUser, DatabaseUnavailable](GuestUser()),
+        Err(NotFound("missing")),
+        lambda _error: Ok(GuestUser()),
     )
     assert isinstance(recovered, Ok)
     assert isinstance(recovered.value, GuestUser)
 
-    mapped_later = map_result(lambda value: value + 1)(Ok[int, str](1))
+    mapped_later = map_result(lambda value: value + 1)(Ok(1))
     assert isinstance(mapped_later, Ok)
     assert mapped_later.value == 2
-    mapped_error_later = map_error(str.upper)(Err[int, str]("failed"))
+    mapped_error_later = map_error(str.upper)(Err("failed"))
     assert isinstance(mapped_error_later, Err)
     assert mapped_error_later.error == "FAILED"
 
 
 def test_observing_and_extracting_values() -> None:
     seen: list[int] = []
-    result = Ok[int, str](2)
+    result = Ok(2)
     observed = tap(result, seen.append)
 
     assert observed is result
     assert seen == [2]
-    tapped_error = tap(Err[int, str]("failed"), seen.append)
+    tapped_error = tap(Err("failed"), seen.append)
     assert isinstance(tapped_error, Err)
     assert tapped_error.error == "failed"
 
-    assert unwrap_or(Err[int, str]("failed"), 0) == 0
-    assert unwrap(Ok[int, str](42)) == 42
+    assert unwrap_or(Err("failed"), 0) == 0
+    assert unwrap(Ok(42)) == 42
     with pytest.raises(Panic):
-        unwrap(Err[int, str]("failed"))
+        unwrap(Err("failed"))
 
 
 def test_collections_and_flatten_examples() -> None:
-    collected = all_results([Ok[int, str](1), Ok[int, str](2), Ok[int, str](3)])
+    collected = all_results([Ok(1), Ok(2), Ok(3)])
     assert isinstance(collected, Ok)
     assert collected.value == [1, 2, 3]
 
     first_error = all_results(
-        [Ok[int, str](1), Err[int, str]("failed"), Ok[int, str](3)],
+        [Ok(1), Err("failed"), Ok(3)],
     )
     assert isinstance(first_error, Err)
     assert first_error.error == "failed"
 
     values, errors = partition(
-        [Ok[int, str](1), Err[int, str]("a"), Ok[int, str](2), Err[int, str]("b")],
+        [Ok(1), Err("a"), Ok(2), Err("b")],
     )
     assert values == [1, 2]
     assert errors == ["a", "b"]
 
-    flattened = flatten(Ok[Ok[int, str], str](Ok[int, str](42)))
+    flattened = flatten(Ok(Ok(42)))
     assert isinstance(flattened, Ok)
     assert flattened.value == 42
 
@@ -319,7 +315,7 @@ def test_callback_defects_are_panics_not_expected_errors() -> None:
         raise ZeroDivisionError("bug")
 
     with pytest.raises(Panic, match="map callback threw"):
-        Ok[int, str](1).map(broken_map)
+        Ok(1).map(broken_map)
 
     with pytest.raises(Panic, match="match_error handler threw"):
         match_error(NotFound("x"), {"NotFound": broken_match})

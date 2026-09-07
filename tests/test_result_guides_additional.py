@@ -130,7 +130,7 @@ async def test_retry_policy_callback_failures_are_panics() -> None:
 
 def test_all_stops_at_the_first_error_and_partition_keeps_every_branch() -> None:
     def results() -> Iterator[Result[int, str]]:
-        yield Ok[int, str](1)
+        yield Ok(1)
         yield err("first")
         raise AssertionError("all() iterated after its first error")
 
@@ -206,15 +206,15 @@ async def test_all_async_and_partition_async_preserve_order_and_panic_on_rejecti
 ):
     async def load(value: int) -> Result[int, str]:
         await asyncio.sleep(0)
-        return Ok[int, str](value)
+        return Ok(value)
 
-    collected = await all_results_async([load(1), Err[int, str]("bad"), load(3)])
+    collected = await all_results_async([load(1), Err("bad"), load(3)])
     assert isinstance(collected, Err)
     assert collected.error == "bad"
 
     requests: list[Result[int, str] | Awaitable[Result[int, str]]] = [
         load(1),
-        Err[int, str]("bad"),
+        Err("bad"),
         load(3),
     ]
     partitioned = await partition_async(requests)

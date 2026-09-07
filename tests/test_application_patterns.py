@@ -43,7 +43,7 @@ def parse_port(input_value: str) -> Result[int, InvalidPort]:
         return err(InvalidPort(input_value))
     if not 1 <= port <= 65_535:
         return err(InvalidPort(input_value))
-    return Ok[int, InvalidPort](port)
+    return Ok(port)
 
 
 def load_port(
@@ -54,18 +54,17 @@ def load_port(
     """Compose parsing with a second typed failure at the application edge."""
     parsed = parse_port(input_value)
     if isinstance(parsed, Err):
-        return Err[int, LoadPortError](parsed.error)
+        return Err(parsed.error)
     if source_fails:
-        return Err[int, LoadPortError](
+        return Err(
             PortUnavailable(ConnectionError("port source is down")),
         )
-    return Ok[int, LoadPortError](parsed.value)
+    return Ok(parsed.value)
 
 
 def test_application_boundaries_do_not_return_string_errors() -> None:
     invalid = parse_port("not-a-port")
     unavailable = load_port("8080", source_fails=True)
-
     assert_type(invalid, Result[int, InvalidPort])
     assert_type(unavailable, Result[int, LoadPortError])
 

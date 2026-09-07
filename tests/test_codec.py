@@ -63,11 +63,11 @@ def _stable_codec_error(
 def test_codec_serializes_and_deserializes_both_result_branches() -> None:
     result_codec = codec(CONFIG)
 
-    encoded_success = result_codec.serialize(Ok[int, str](42))
+    encoded_success = result_codec.serialize(Ok(42))
     assert isinstance(encoded_success, Ok)
     assert encoded_success.value == {"status": "ok", "value": "42"}
 
-    encoded_error = result_codec.serialize(Err[int, str]("missing"))
+    encoded_error = result_codec.serialize(Err("missing"))
     assert isinstance(encoded_error, Ok)
     assert encoded_error.value == {"status": "error", "error": "missing"}
 
@@ -93,7 +93,7 @@ def test_codec_returns_typed_errors_for_invalid_envelopes_and_payloads() -> None
     assert isinstance(invalid_payload.error, ResultDeserializationError)
     assert invalid_payload.error.issues == ({"message": "expected digits"},)
 
-    invalid_output = result_codec.serialize(Ok[int, str](-1))
+    invalid_output = result_codec.serialize(Ok(-1))
     assert isinstance(invalid_output, Err)
     assert isinstance(invalid_output.error, ResultSerializationError)
     assert invalid_output.error.value == -1
@@ -102,11 +102,11 @@ def test_codec_returns_typed_errors_for_invalid_envelopes_and_payloads() -> None
 def test_codec_wire_envelopes_match_golden_protocol_files() -> None:
     result_codec = codec(CONFIG)
 
-    encoded_success = result_codec.serialize(Ok[int, str](42))
+    encoded_success = result_codec.serialize(Ok(42))
     assert isinstance(encoded_success, Ok)
     assert encoded_success.value == _golden_json("ok-envelope.json")
 
-    encoded_error = result_codec.serialize(Err[int, str]("missing"))
+    encoded_error = result_codec.serialize(Err("missing"))
     assert isinstance(encoded_error, Ok)
     assert encoded_error.value == _golden_json("error-envelope.json")
 
@@ -136,7 +136,7 @@ def test_codec_fixture_inputs_and_boundary_errors_match_golden_files() -> None:
         "invalid-payload-error.json",
     )
 
-    invalid_output = result_codec.serialize(Ok[int, str](-1))
+    invalid_output = result_codec.serialize(Ok(-1))
     assert isinstance(invalid_output, Err)
     assert isinstance(invalid_output.error, ResultSerializationError)
     assert _stable_codec_error(invalid_output.error) == _golden_json(
@@ -147,7 +147,7 @@ def test_codec_fixture_inputs_and_boundary_errors_match_golden_files() -> None:
 def test_codec_unsafe_methods_panic_only_on_codec_errors() -> None:
     result_codec = codec(CONFIG)
 
-    assert result_codec.serialize_unsafe(Ok[int, str](42)) == {
+    assert result_codec.serialize_unsafe(Ok(42)) == {
         "status": "ok",
         "value": "42",
     }
@@ -158,7 +158,7 @@ def test_codec_unsafe_methods_panic_only_on_codec_errors() -> None:
     assert decoded_error.error == "missing"
 
     with pytest.raises(Panic, match="serialize_unsafe failed"):
-        result_codec.serialize_unsafe(Ok[int, str](-1))
+        result_codec.serialize_unsafe(Ok(-1))
     with pytest.raises(Panic, match="deserialize_unsafe failed"):
         result_codec.deserialize_unsafe({"status": "ok", "value": "nope"})
 
@@ -187,7 +187,7 @@ async def test_codec_preserves_schema_cancellation() -> None:
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await result_codec.serialize_async(Ok[int, str](1))
+        await result_codec.serialize_async(Ok(1))
 
 
 @pytest.mark.asyncio
@@ -208,7 +208,7 @@ async def test_codec_supports_async_schemas() -> None:
     )
     result_codec = codec(async_config)
 
-    encoded = await result_codec.serialize_async(Ok[int, str](7))
+    encoded = await result_codec.serialize_async(Ok(7))
     assert isinstance(encoded, Ok)
     assert encoded.value == {"status": "ok", "value": "7"}
 
@@ -235,7 +235,7 @@ async def test_async_codec_uses_the_same_golden_wire_protocol() -> None:
     )
     result_codec = codec(async_config)
 
-    encoded = await result_codec.serialize_async(Ok[int, str](42))
+    encoded = await result_codec.serialize_async(Ok(42))
     assert isinstance(encoded, Ok)
     assert encoded.value == _golden_json("ok-envelope.json")
 

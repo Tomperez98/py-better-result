@@ -28,9 +28,45 @@ from better_result.core import (
 
 
 def test_result_constructors_preserve_their_static_payload_types() -> None:
-    assert_type(ok(), Ok[None, Never])
-    assert_type(ok(42), Ok[int, Never])
-    assert_type(err("missing"), Err[Never, str])
+    assert_type(ok(), Ok[None])
+    assert_type(ok(int("42")), Ok[int])
+
+    def missing() -> str:
+        return "missing"
+
+    assert_type(err(missing()), Err[str])
+
+
+def test_concrete_variants_fit_annotated_results_and_narrow_branches() -> None:
+    def inspect(result: Result[int, str]) -> None:
+        assert_type(result, Result[int, str])
+        if isinstance(result, Ok):
+            assert_type(result.value, int)
+        if isinstance(result, Err):
+            assert_type(result.error, str)
+
+    def as_result(result: Result[int, str]) -> Result[int, str]:
+        return result
+
+    success: Result[int, str] = Ok(42)
+    failure: Result[int, str] = Err("missing")
+    assert_type(as_result(Ok(42)), Result[int, str])
+    assert_type(as_result(Err("missing")), Result[int, str])
+    inspect(success)
+    inspect(failure)
+
+    def handle_success(value: int) -> str:
+        return str(value)
+
+    def handle_failure(error: str) -> str:
+        return error
+
+    def match_result(result: Result[int, str]) -> str:
+        if isinstance(result, Ok):
+            return result.match({"ok": handle_success})
+        return result.match({"err": handle_failure})
+
+    assert_type(match_result(success), str)
 
 
 def test_ok_and_err_constructors_expose_status_and_payload() -> None:
@@ -266,7 +302,7 @@ def test_result_iterators_support_yield_from_and_short_circuiting() -> None:
     with pytest.raises(Panic, match="Unreachable"):
         next(failure_iterator)
 
-    def pipeline() -> Generator[object, None, Ok[int, Never]]:
+    def pipeline() -> Generator[object, None, Ok[int]]:
         value = yield from ok(2)
         return ok(value * 4)
 

@@ -24,7 +24,7 @@ def validate_port(port: int) -> Result[int, str]:
 def main() -> None:
     for raw_port in ("8080", "not-a-port", "70000"):
         result = parse_port(raw_port)
-        print(f"{raw_port!r} -> {result}")  # noqa: T201
+        print(f"{raw_port!r} -> {result}")
 
 
 if __name__ == "__main__":

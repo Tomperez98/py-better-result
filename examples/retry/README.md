@@ -15,17 +15,19 @@ Expected output:
 ```text
 Ok(value='response body')
 attempts=3
-RetryPolicy(times=2, schedule=DynamicDelay(function=<function main.<locals>.delay_for at 0x...>), should_retry=None)
+Ok(value='dynamic response')
+dynamic_attempts=3
+dynamic_delays=[0.1, 0.2]
 ```
-
-The function address in the final line varies between runs.
 
 ## How it works
 
 `request` fails twice, then succeeds. `try_result` catches the exceptions as
 strings, and the policy permits up to three retries while the mapped error
-contains `temporary`. With `initial_delay=0`, the example runs immediately but
-still demonstrates the attempt count and policy boundary.
+contains `temporary`. With a short `initial_delay=0.01`, the example also
+executes the exponential schedule without making the example slow.
 
-The final policy uses a dynamic schedule to show how a delay can depend on the
-retry context. The complete flow is in [`main.py`](main.py).
+`dynamic_request` exercises a dynamic schedule for real. Its delay callback
+receives the mapped error and attempt number, records delays of `0.1` and
+`0.2` seconds, and the operation succeeds on the third attempt. The complete
+flow is in [`main.py`](main.py).

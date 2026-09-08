@@ -164,7 +164,7 @@ assert result == Err(
 )
 ```
 
-Both `try_result` and `try_async` accept the same bounded `RetryPolicy`. An integer remains shorthand for immediate retries. Prefer the named policy constructors when a delay schedule is needed:
+Both `try_result` and `try_async` accept the same bounded `RetryPolicy`. An integer remains shorthand for immediate retries. An integer retry count, or a policy without `should_retry`, retries every caught `Exception`; use a predicate that selects transient failures and retry only idempotent or otherwise safe-to-repeat operations. Prefer the named policy constructors when a delay schedule is needed:
 
 ```python
 import asyncio
@@ -214,7 +214,9 @@ dynamic_policy = RetryPolicy[str].from_schedule(
 Ok(value='response body')
 ```
 
-`TryContext.attempt` starts at `1`. A policy receives a separate `RetryContext` containing the mapped error, attempt number, and optional cancellation token. Retry schedules derive their zero-based retry position from `attempt`; custom delay and retry predicates receive the context as their only argument. `CancellationToken` is best-effort: `try_async` monitors it, cancels an in-flight operation task, checks it before and after attempts, and interrupts retry waits. Ordinary async operations do not need to check the token themselves. Cancellation raises `asyncio.CancelledError`; it is not returned as a domain `Err`.
+`TryContext.attempt` starts at `1`. A policy receives a separate `RetryContext` containing the mapped error, attempt number, and optional cancellation token. Retry schedules derive their zero-based retry position from `attempt`; custom delay and retry predicates receive the context as their only argument. `CancellationToken` is best-effort: `try_async` monitors it, cancels an in-flight operation task, checks it before and after attempts and policy decisions, and interrupts retry waits. Ordinary async operations do not need to check the token themselves. Cancellation raises `asyncio.CancelledError`; it is not returned as a domain `Err`.
+
+Delayed `try_result` retries use blocking `time.sleep()` and do not accept a cancellation token. Use `try_async` when retry waits must be interruptible.
 
 Cancellation still follows Python's async cancellation boundaries. CPU-bound code, blocking calls, or dependencies that suppress `CancelledError` may not stop immediately. Code that needs tighter responsiveness can optionally call `context.cancel_token.raise_if_cancelled()` while processing work. Native task cancellation is likewise propagated.
 
@@ -289,4 +291,4 @@ uv run ruff check .
 uv run ty check
 ```
 
-The test suite includes runtime behavior and static type contracts.
+The test suite includes example-based runtime tests, Hypothesis property-based tests, and static type contracts. Property tests exercise Result laws, collection reference models, retry bounds, backoff invariants, and cancellation behavior with automatically generated inputs.

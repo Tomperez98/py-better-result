@@ -29,4 +29,4 @@ required-imports = ["from __future__ import annotations"]
 
 [lint.per-file-ignores]
 "**/tests/**/*.py" = ["SLF001"]
-"examples/**/*.py" = ["INP001"]
+"examples/**/*.py" = ["INP001", "T201"]

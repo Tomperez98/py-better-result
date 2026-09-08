@@ -34,7 +34,7 @@ async def main() -> None:
     try:
         await task
     except asyncio.CancelledError:
-        print("CPU work cancelled at a chunk boundary")  # noqa: T201
+        print("CPU work cancelled at a chunk boundary")
 
 
 if __name__ == "__main__":

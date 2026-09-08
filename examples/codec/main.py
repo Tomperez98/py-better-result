@@ -54,20 +54,20 @@ def main() -> None:
     )
 
     encoded = user_codec.serialize(Ok(User(42, "Ada")))
-    print(encoded)  # noqa: T201
+    print(encoded)
 
     if isinstance(encoded, Ok):
         decoded = user_codec.deserialize(encoded.ok_value)
-        print(decoded)  # noqa: T201
+        print(decoded)
 
     # Wire-level errors remain Err values after decoding.
-    print(user_codec.deserialize({"status": "error", "error": {"code": "not_found"}}))  # noqa: T201
+    print(user_codec.deserialize({"status": "error", "error": {"code": "not_found"}}))
 
     # Schema failures are returned as ResultDeserializationError values.
-    print(user_codec.deserialize({"status": "ok", "value": {"id": "wrong"}}))  # noqa: T201
+    print(user_codec.deserialize({"status": "ok", "value": {"id": "wrong"}}))
 
     # Serialization errors use the same Result shape.
-    print(user_codec.serialize(Err("not_found")))  # noqa: T201
+    print(user_codec.serialize(Err("not_found")))
 
 
 if __name__ == "__main__":

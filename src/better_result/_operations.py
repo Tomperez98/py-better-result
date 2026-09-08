@@ -225,6 +225,13 @@ class RetryPolicy[E]:
             _raise_retry_policy_error("retry times must be a non-negative integer")
         if self.times < 0:
             _raise_retry_policy_error("retry times must be a non-negative integer")
+        if not isinstance(
+            self.schedule,
+            (ConstantDelay, LinearBackoff, ExponentialBackoff, DynamicDelay, Jittered),
+        ):
+            _raise_retry_policy_error("retry schedule must be a supported schedule")
+        if self.should_retry is not None and not callable(self.should_retry):
+            _raise_retry_policy_error("retry predicate must be callable")
 
     @classmethod
     def from_schedule(
@@ -361,11 +368,8 @@ async def _wait_for_retry(
     if cancel_token is None:
         await asyncio.sleep(delay)
         return
-    try:
+    with suppress(TimeoutError):
         await asyncio.wait_for(cancel_token.wait(), timeout=delay)
-    except TimeoutError:
-        if not cancel_token.is_cancelled:
-            return
     cancel_token.raise_if_cancelled()
 
 
@@ -476,6 +480,8 @@ async def try_async[T](
                     cancel_token=cancel_token,
                 )
             )
+            if cancel_token is not None:
+                cancel_token.raise_if_cancelled()
             if isinstance(decision, StopRetry):
                 return cast("Result[T, object]", Err(error))
             assert isinstance(decision, RetryAfter)

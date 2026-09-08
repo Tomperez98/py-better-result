@@ -1,6 +1,6 @@
 [project]
 name = "py-better-result"
-version = "1.0.1"
+version = "1.0.2"
 description = "A narrow, typed Result API for Python"
 readme = "README.md"
 authors = [{ name = "Tomperez98", email = "tomasperezalvarez@gmail.com" }]
@@ -20,6 +20,7 @@ members = ["examples/*"]
 
 [dependency-groups]
 dev = [
+  "hypothesis>=6.140,<7",
   "pytest>=9.1.1,<10",
   "pytest-asyncio>=1.4.0,<2",
   "pytest-cov>=7.0.0,<8",

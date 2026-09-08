@@ -41,7 +41,7 @@ async def main() -> None:
             fetch_display_name(404),
         )
     )
-    print(names)  # noqa: T201
+    print(names)
 
 
 if __name__ == "__main__":

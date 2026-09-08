@@ -16,14 +16,14 @@ def main() -> None:
     results: list[Result[int, str]] = [Ok(1), Err("bad input"), Ok(3)]
 
     # all_results short-circuits at the first error.
-    print(all_results(results))  # noqa: T201
+    print(all_results(results))
 
     # partition_results keeps both sides and preserves their relative order.
     values, errors = partition_results(results)
-    print(f"values={values}, errors={errors}")  # noqa: T201
+    print(f"values={values}, errors={errors}")
 
     nested: Result[Result[int, str], str] = Ok(Ok(42))
-    print(flatten_result(nested))  # noqa: T201
+    print(flatten_result(nested))
 
 
 if __name__ == "__main__":

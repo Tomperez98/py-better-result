@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Never, cast
+from typing import TYPE_CHECKING, Never, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import pytest
 
@@ -140,6 +143,20 @@ def test_retry_policy_validates_schedule_invariants() -> None:
     invalid_jitter: object = object()
     with pytest.raises(ValueError, match="jitter"):
         Jittered(ConstantDelay(1), factor=cast("float", invalid_jitter))
+
+    invalid_schedule: object = object()
+    with pytest.raises(ValueError, match="schedule"):
+        RetryPolicy(times=1, schedule=cast("ConstantDelay", invalid_schedule))
+
+    invalid_predicate: object = object()
+    with pytest.raises(ValueError, match="predicate"):
+        RetryPolicy.constant(
+            times=1,
+            should_retry=cast(
+                "Callable[[RetryContext[str]], bool]",
+                invalid_predicate,
+            ),
+        )
 
     assert ConstantDelay(2).seconds == 2.0
     assert ExponentialBackoff(1, factor=3).factor == 3.0
@@ -491,6 +508,22 @@ async def test_try_async_validates_retry_policy_and_preserves_cancellation() -> 
                 should_retry=cancel_before_wait,
             ),
             cancel_token=cancelled_by_policy,
+        )
+
+    cancelled_by_terminal_policy = CancellationToken()
+
+    def cancel_before_stop(_: RetryContext[str]) -> bool:
+        cancelled_by_terminal_policy.cancel()
+        return False
+
+    with pytest.raises(asyncio.CancelledError):
+        await try_async(
+            fails,
+            retry=RetryPolicy.constant(
+                times=1,
+                should_retry=cancel_before_stop,
+            ),
+            cancel_token=cancelled_by_terminal_policy,
         )
 
     with pytest.raises(ValueError, match="retry"):

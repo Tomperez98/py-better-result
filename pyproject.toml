@@ -1,6 +1,6 @@
 [project]
 name = "py-better-result"
-version = "1.0.0"
+version = "1.0.1"
 description = "A narrow, typed Result API for Python"
 readme = "README.md"
 authors = [{ name = "Tomperez98", email = "tomasperezalvarez@gmail.com" }]

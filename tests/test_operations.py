@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Never
+import time
+from typing import Never, cast
 
 import pytest
 
 from better_result import (
     CancellationToken,
+    ConstantDelay,
+    DynamicDelay,
     Err,
+    ExponentialBackoff,
+    Jittered,
+    LinearBackoff,
     Ok,
+    RetryAfter,
+    RetryContext,
     RetryPolicy,
+    StopRetry,
     TryContext,
     all_results,
     all_results_async,
@@ -66,6 +75,135 @@ def test_try_result_exposes_attempt_context_and_retries_immediately() -> None:
     assert attempts == [1, 2]
 
 
+def test_retry_policy_decisions_use_typed_schedules() -> None:
+    context = RetryContext(error="temporary", attempt=2)
+
+    assert ConstantDelay(2).delay_for(context) == 2
+    assert LinearBackoff(2).delay_for(context) == 4
+    assert ExponentialBackoff(2).delay_for(context) == 4
+
+    def dynamic_delay(retry_context: RetryContext[str]) -> float:
+        return retry_context.attempt / 10
+
+    assert DynamicDelay(dynamic_delay).delay_for(context) == 0.2
+
+    policy = RetryPolicy.from_schedule(
+        times=2,
+        schedule=ConstantDelay(1),
+    )
+    assert policy.decide(context) == RetryAfter(1)
+    assert policy.decide(RetryContext(error="temporary", attempt=3)) == StopRetry()
+
+
+def test_jittered_schedule_preserves_its_delay_bounds() -> None:
+    context = RetryContext(error="temporary", attempt=2)
+    delay = Jittered(ExponentialBackoff(2), factor=0.5).delay_for(context)
+    assert 2 <= delay <= 4
+    full_jitter_delay = Jittered(ConstantDelay(1), factor=1.0).delay_for(context)
+    assert 0 <= full_jitter_delay <= 1
+
+
+def test_retry_policy_validates_schedule_invariants() -> None:
+    invalid_delay: object = object()
+    with pytest.raises(ValueError, match="delay"):
+        ConstantDelay(cast("float", invalid_delay))
+
+    with pytest.raises(ValueError, match="attempt"):
+        RetryContext(error="temporary", attempt=0)
+    with pytest.raises(ValueError, match="attempt"):
+        RetryContext(error="temporary", attempt=True)
+    invalid_attempt: object = object()
+    with pytest.raises(ValueError, match="attempt"):
+        RetryContext(error="temporary", attempt=cast("int", invalid_attempt))
+
+    invalid_delay_bool: object = True
+    with pytest.raises(ValueError, match="delay"):
+        ConstantDelay(seconds=cast("float", invalid_delay_bool))
+
+    with pytest.raises(ValueError, match="factor"):
+        ExponentialBackoff(1, factor=0)
+    with pytest.raises(ValueError, match="factor"):
+        ExponentialBackoff(1, factor=True)
+    invalid_factor: object = object()
+    with pytest.raises(ValueError, match="factor"):
+        ExponentialBackoff(1, factor=cast("float", invalid_factor))
+
+    with pytest.raises(ValueError, match="overflow"):
+        ExponentialBackoff(1).delay_for(
+            RetryContext(error="temporary", attempt=2049),
+        )
+
+    with pytest.raises(ValueError, match="jitter"):
+        Jittered(ConstantDelay(1), factor=1.1)
+    with pytest.raises(ValueError, match="jitter"):
+        Jittered(ConstantDelay(1), factor=True)
+    invalid_jitter: object = object()
+    with pytest.raises(ValueError, match="jitter"):
+        Jittered(ConstantDelay(1), factor=cast("float", invalid_jitter))
+
+    assert ConstantDelay(2).seconds == 2.0
+    assert ExponentialBackoff(1, factor=3).factor == 3.0
+    assert RetryAfter(4).delay == 4.0
+
+    assert isinstance(RetryPolicy.constant(times=1).schedule, ConstantDelay)
+    assert RetryPolicy(times=1, schedule=ConstantDelay(1)).times == 1
+    assert isinstance(
+        RetryPolicy.exponential(times=1, initial_delay=1).schedule,
+        ExponentialBackoff,
+    )
+    assert isinstance(
+        RetryPolicy.exponential(times=1, initial_delay=1, jitter=0.5).schedule,
+        Jittered,
+    )
+    assert isinstance(
+        RetryPolicy[str].dynamic(times=1, delay=lambda _: 1).schedule,
+        DynamicDelay,
+    )
+
+
+def test_try_result_without_a_retry_policy_returns_the_mapped_error() -> None:
+    assert try_result(_raise_zero, catch=str, retry=None) == Err("division by zero")
+
+
+def test_try_result_supports_the_same_policy_as_try_async(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delays: list[float] = []
+    monkeypatch.setattr(time, "sleep", delays.append)
+    attempts: list[int] = []
+
+    def operation(context: TryContext) -> str:
+        attempts.append(context.attempt)
+        if len(attempts) < 3:
+            message = "temporary"
+            raise RuntimeError(message)
+        return "ok"
+
+    result = try_result(
+        operation,
+        catch=str,
+        retry=RetryPolicy.linear(times=2, initial_delay=2),
+    )
+
+    assert result == Ok("ok")
+    assert attempts == [1, 2, 3]
+    assert delays == [2, 4]
+
+
+def test_try_result_integer_retry_is_immediate_policy_shorthand() -> None:
+    attempts: list[int] = []
+
+    def operation(context: TryContext) -> str:
+        attempts.append(context.attempt)
+        if len(attempts) < 2:
+            message = "temporary"
+            raise RuntimeError(message)
+        return "ok"
+
+    assert try_result(operation, retry=1) == Ok("ok")
+    assert attempts == [1, 2]
+
+
 def test_try_result_propagates_mapper_bugs() -> None:
     def broken_mapper(_: Exception) -> str:
         message = "mapper broken"
@@ -100,14 +238,14 @@ async def test_try_async_forwards_cancellation_token_and_stops_retry_delay() -> 
         message = "temporary"
         raise RuntimeError(message)
 
-    result = await try_async(
-        operation,
-        catch=str,
-        cancel_token=token,
-        retry=RetryPolicy(times=3, delay=10),
-    )
+    with pytest.raises(asyncio.CancelledError):
+        await try_async(
+            operation,
+            catch=str,
+            cancel_token=token,
+            retry=RetryPolicy.constant(times=3, delay=10),
+        )
 
-    assert result == Err("temporary")
     assert contexts == [token]
     assert cancel_task is not None
     await cancel_task
@@ -127,13 +265,16 @@ async def test_try_async_captures_errors_and_retries_successful_attempts() -> No
             raise RuntimeError(message)
         return "ok"
 
+    success_token = CancellationToken()
     result = await try_async(
         operation,
         catch=str,
-        retry=RetryPolicy(times=3, delay=0),
+        retry=RetryPolicy.constant(times=3),
+        cancel_token=success_token,
     )
     assert result == Ok("ok")
     assert attempts == [1, 2, 3]
+    assert await try_async(operation) == Ok("ok")
 
 
 @pytest.mark.asyncio
@@ -154,10 +295,9 @@ async def test_try_async_can_stop_retries_with_a_predicate_and_support_async_cat
     result = await try_async(
         operation,
         catch=catch,
-        retry=RetryPolicy(
+        retry=RetryPolicy.constant(
             times=3,
-            delay=0,
-            should_retry=lambda error, _: retry_errors.append(error) or False,
+            should_retry=lambda context: retry_errors.append(context.error) or False,
         ),
     )
     assert result == Err("permanent")
@@ -183,7 +323,10 @@ async def test_try_async_applies_backoff_and_dynamic_delays(
     result = await try_async(
         always_fails,
         catch=str,
-        retry=RetryPolicy(times=2, delay=2, backoff="linear"),
+        retry=RetryPolicy.from_schedule(
+            times=2,
+            schedule=LinearBackoff(2),
+        ),
     )
     assert result == Err("failed")
     assert delays == [2, 4]
@@ -192,7 +335,10 @@ async def test_try_async_applies_backoff_and_dynamic_delays(
     result = await try_async(
         always_fails,
         catch=str,
-        retry=RetryPolicy(times=2, delay=lambda _, context: context.attempt / 10),
+        retry=RetryPolicy[str].dynamic(
+            times=2,
+            delay=lambda context: context.attempt / 10,
+        ),
     )
     assert result == Err("failed")
     assert delays == [0.1, 0.2]
@@ -201,10 +347,9 @@ async def test_try_async_applies_backoff_and_dynamic_delays(
     result = await try_async(
         always_fails,
         catch=str,
-        retry=RetryPolicy(
+        retry=RetryPolicy.exponential(
             times=2,
-            delay=2,
-            backoff="exponential",
+            initial_delay=2,
             jitter=0.5,
         ),
     )
@@ -222,7 +367,11 @@ async def test_try_async_validates_retry_policy_and_preserves_cancellation() -> 
     with pytest.raises(ValueError, match="jitter"):
         await try_async(
             unreachable,
-            retry=RetryPolicy(times=1, delay=0, jitter=1.1),
+            retry=RetryPolicy.exponential(
+                times=1,
+                initial_delay=0,
+                jitter=1.1,
+            ),
         )
 
     async def cancelled(_: TryContext) -> str:
@@ -242,56 +391,56 @@ async def test_try_async_validates_retry_policy_and_preserves_cancellation() -> 
     timeout_token = CancellationToken()
     timeout_result = await try_async(
         fails,
-        retry=RetryPolicy(times=1, delay=0),
+        retry=RetryPolicy.constant(times=1),
         cancel_token=timeout_token,
     )
     assert isinstance(timeout_result, Err)
 
     pre_cancelled = CancellationToken()
     pre_cancelled.cancel()
-    pre_cancelled_result = await try_async(
-        fails,
-        retry=RetryPolicy(times=1, delay=10),
-        cancel_token=pre_cancelled,
-    )
-    assert isinstance(pre_cancelled_result, Err)
+    with pytest.raises(asyncio.CancelledError):
+        await try_async(
+            fails,
+            retry=RetryPolicy.constant(times=1, delay=10),
+            cancel_token=pre_cancelled,
+        )
+
+    cancelled_by_policy = CancellationToken()
+
+    def cancel_before_wait(_: RetryContext[str]) -> bool:
+        cancelled_by_policy.cancel()
+        return True
+
+    with pytest.raises(asyncio.CancelledError):
+        await try_async(
+            fails,
+            retry=RetryPolicy.constant(
+                times=1,
+                should_retry=cancel_before_wait,
+            ),
+            cancel_token=cancelled_by_policy,
+        )
 
     with pytest.raises(ValueError, match="retry"):
         try_result(lambda _: "unused", retry=-1)
     with pytest.raises(ValueError, match="retry"):
-        await try_async(unreachable, retry=RetryPolicy(times=-1))
-    with pytest.raises(ValueError, match="backoff"):
+        try_result(lambda _: "unused", retry=True)
+    with pytest.raises(ValueError, match="retry"):
         await try_async(
             unreachable,
-            retry=RetryPolicy(
-                times=1,
-                backoff="invalid",
-            ),
+            retry=RetryPolicy(times=-1, schedule=ConstantDelay(0)),
         )
+    with pytest.raises(ValueError, match="retry"):
+        RetryPolicy(times=True, schedule=ConstantDelay(0))
     with pytest.raises(ValueError, match="delay"):
-        await try_async(unreachable, retry=RetryPolicy(times=1, delay=-1))
-    with pytest.raises(ValueError, match="backoff"):
         await try_async(
             unreachable,
-            retry=RetryPolicy(
-                times=1,
-                delay=lambda _, __: 0,
-                backoff="linear",
-            ),
-        )
-    with pytest.raises(ValueError, match="jitter"):
-        await try_async(
-            unreachable,
-            retry=RetryPolicy(
-                times=1,
-                delay=lambda _, __: 0,
-                jitter=0.5,
-            ),
+            retry=RetryPolicy.constant(times=1, delay=-1),
         )
     with pytest.raises(ValueError, match="delay"):
         await try_async(
             fails,
-            retry=RetryPolicy(times=1, delay=lambda _, __: -1),
+            retry=RetryPolicy[Exception].dynamic(times=1, delay=lambda _: -1),
         )
 
 

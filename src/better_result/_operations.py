@@ -6,7 +6,9 @@ import asyncio
 import inspect
 import math
 import random
-from dataclasses import dataclass, field
+import time
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn, cast, overload
 
 if TYPE_CHECKING:
@@ -15,16 +17,13 @@ if TYPE_CHECKING:
 from ._core import Err, Ok, Result
 
 
-@dataclass(frozen=True, slots=True)
 class CancellationToken:
-    """Cooperative cancellation signal for async operations and retry waits."""
+    """Best-effort cancellation signal for async operations and retry waits."""
 
-    _event: asyncio.Event = field(
-        default_factory=asyncio.Event,
-        init=False,
-        repr=False,
-        compare=False,
-    )
+    __slots__ = ("_event",)
+
+    def __init__(self) -> None:
+        self._event = asyncio.Event()
 
     @property
     def is_cancelled(self) -> bool:
@@ -50,19 +49,262 @@ class TryContext:
 
 
 @dataclass(frozen=True, slots=True)
-class RetryPolicy[E]:
-    """
-    Retry controls for :func:`try_async`.
+class RetryContext[E]:
+    """Context supplied to a retry policy after an error is mapped."""
 
-    ``times`` counts retries after the initial attempt. Delays are in seconds.
-    A callable delay receives the mapped error and the failed attempt context.
-    """
+    error: E
+    attempt: int
+    cancel_token: CancellationToken | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.attempt, bool) or not isinstance(self.attempt, int):
+            _raise_retry_policy_error("retry attempt must be a positive integer")
+        if self.attempt < 1:
+            _raise_retry_policy_error("retry attempt must be a positive integer")
+
+
+@dataclass(frozen=True, slots=True)
+class StopRetry:
+    """A retry policy decision that ends the operation with its current error."""
+
+
+@dataclass(frozen=True, slots=True)
+class RetryAfter:
+    """A retry policy decision that waits before starting another attempt."""
+
+    delay: float
+
+    def __post_init__(self) -> None:
+        _validate_delay(self.delay)
+
+
+@dataclass(frozen=True, slots=True)
+class ConstantDelay:
+    """Use the same delay before every retry."""
+
+    seconds: float
+
+    def __post_init__(self) -> None:
+        _validate_delay(self.seconds)
+
+    def delay_for[E](self, context: RetryContext[E]) -> float:
+        del context
+        return self.seconds
+
+
+@dataclass(frozen=True, slots=True)
+class LinearBackoff:
+    """Increase the initial delay by one base interval per retry."""
+
+    initial: float
+
+    def __post_init__(self) -> None:
+        _validate_delay(self.initial)
+
+    def delay_for[E](self, context: RetryContext[E]) -> float:
+        delay = self.initial * context.attempt
+        _validate_delay(delay)
+        return float(delay)
+
+
+@dataclass(frozen=True, slots=True)
+class ExponentialBackoff:
+    """Multiply the initial delay by ``factor`` for each retry."""
+
+    initial: float
+    factor: float = 2.0
+
+    def __post_init__(self) -> None:
+        _validate_delay(self.initial)
+        _validate_backoff_factor(self.factor)
+
+    def delay_for[E](self, context: RetryContext[E]) -> float:
+        try:
+            delay = self.initial * self.factor ** (context.attempt - 1)
+        except OverflowError:
+            _raise_retry_policy_error("retry delay overflowed")
+        _validate_delay(delay)
+        return cast("float", delay)
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicDelay[E]:
+    """Compute a delay from the mapped error and retry context."""
+
+    function: Callable[[RetryContext[E]], float]
+
+    def delay_for(self, context: RetryContext[E]) -> float:
+        delay = self.function(context)
+        _validate_delay(delay)
+        return delay
+
+
+@dataclass(frozen=True, slots=True)
+class Jittered[E]:
+    """Apply multiplicative jitter to another retry schedule."""
+
+    schedule: RetrySchedule[E]
+    factor: float
+
+    def __post_init__(self) -> None:
+        _validate_jitter_factor(self.factor)
+
+    def delay_for(self, context: RetryContext[E]) -> float:
+        delay = self.schedule.delay_for(context)
+        factor = self.factor
+        jittered_delay = delay * (1 - factor + random.SystemRandom().random() * factor)
+        _validate_delay(jittered_delay)
+        return jittered_delay
+
+
+type RetrySchedule[E] = (
+    ConstantDelay | LinearBackoff | ExponentialBackoff | DynamicDelay[E] | Jittered[E]
+)
+type RetryDecision = StopRetry | RetryAfter
+
+
+def _raise_retry_policy_error(message: str) -> NoReturn:
+    raise ValueError(message)
+
+
+def _validate_delay(delay: float) -> None:
+    if isinstance(delay, bool):
+        _raise_retry_policy_error("retry delay must be a finite non-negative number")
+    try:
+        valid = math.isfinite(delay) and delay >= 0
+    except (TypeError, ValueError):
+        _raise_retry_policy_error("retry delay must be a finite non-negative number")
+    if not valid:
+        _raise_retry_policy_error("retry delay must be a finite non-negative number")
+
+
+def _validate_backoff_factor(factor: float) -> None:
+    if isinstance(factor, bool):
+        _raise_retry_policy_error(
+            "retry backoff factor must be a finite number at least 1"
+        )
+    try:
+        valid = math.isfinite(factor) and factor >= 1
+    except (TypeError, ValueError):
+        _raise_retry_policy_error(
+            "retry backoff factor must be a finite number at least 1"
+        )
+    if not valid:
+        _raise_retry_policy_error(
+            "retry backoff factor must be a finite number at least 1"
+        )
+
+
+def _validate_jitter_factor(factor: float) -> None:
+    if isinstance(factor, bool):
+        _raise_retry_policy_error(
+            "retry jitter must be a finite number between 0 and 1"
+        )
+    try:
+        valid = math.isfinite(factor) and 0 <= factor <= 1
+    except (TypeError, ValueError):
+        _raise_retry_policy_error(
+            "retry jitter must be a finite number between 0 and 1"
+        )
+    if not valid:
+        _raise_retry_policy_error(
+            "retry jitter must be a finite number between 0 and 1"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RetryPolicy[E]:
+    """Bounded retry decisions shared by synchronous and async operations."""
 
     times: int
-    delay: float | Callable[[E, TryContext], float] = 0
-    backoff: str = "constant"
-    should_retry: Callable[[E, TryContext], bool] | None = None
-    jitter: bool | float = False
+    schedule: RetrySchedule[E]
+    should_retry: Callable[[RetryContext[E]], bool] | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.times, bool) or not isinstance(self.times, int):
+            _raise_retry_policy_error("retry times must be a non-negative integer")
+        if self.times < 0:
+            _raise_retry_policy_error("retry times must be a non-negative integer")
+
+    @classmethod
+    def from_schedule(
+        cls,
+        times: int,
+        schedule: RetrySchedule[E],
+        should_retry: Callable[[RetryContext[E]], bool] | None = None,
+    ) -> RetryPolicy[E]:
+        return cls(times, schedule, should_retry)
+
+    @classmethod
+    def immediate(
+        cls,
+        times: int,
+        should_retry: Callable[[RetryContext[E]], bool] | None = None,
+    ) -> RetryPolicy[E]:
+        return cls(times, ConstantDelay(0), should_retry)
+
+    @classmethod
+    def constant(
+        cls,
+        times: int,
+        delay: float = 0,
+        should_retry: Callable[[RetryContext[E]], bool] | None = None,
+    ) -> RetryPolicy[E]:
+        return cls(times, ConstantDelay(delay), should_retry)
+
+    @classmethod
+    def linear(
+        cls,
+        times: int,
+        initial_delay: float,
+        should_retry: Callable[[RetryContext[E]], bool] | None = None,
+    ) -> RetryPolicy[E]:
+        return cls(times, LinearBackoff(initial_delay), should_retry)
+
+    @classmethod
+    def exponential(
+        cls,
+        times: int,
+        initial_delay: float,
+        factor: float = 2.0,
+        *,
+        jitter: float = 0,
+        should_retry: Callable[[RetryContext[E]], bool] | None = None,
+    ) -> RetryPolicy[E]:
+        schedule: RetrySchedule[E] = ExponentialBackoff(initial_delay, factor)
+        if jitter:
+            schedule = Jittered(schedule, jitter)
+        return cls(times, schedule, should_retry)
+
+    @classmethod
+    def dynamic(
+        cls,
+        times: int,
+        delay: Callable[[RetryContext[E]], float],
+        should_retry: Callable[[RetryContext[E]], bool] | None = None,
+    ) -> RetryPolicy[E]:
+        return cls(times, DynamicDelay(delay), should_retry)
+
+    def decide(self, context: RetryContext[E]) -> RetryDecision:
+        if context.attempt > self.times:
+            return StopRetry()
+        if self.should_retry is not None and not self.should_retry(context):
+            return StopRetry()
+        return RetryAfter(self.schedule.delay_for(context))
+
+
+def _coerce_retry_policy[E](
+    retry: int | RetryPolicy[E] | None,
+) -> RetryPolicy[E] | None:
+    if retry is None:
+        return None
+    if isinstance(retry, bool) or not isinstance(retry, (int, RetryPolicy)):
+        _raise_retry_policy_error("retry must be a non-negative integer or policy")
+    if isinstance(retry, int):
+        if retry < 0:
+            _raise_retry_policy_error("retry must be non-negative")
+        return cast("RetryPolicy[E]", RetryPolicy.immediate(retry))
+    return retry
 
 
 @overload
@@ -70,7 +312,7 @@ def try_result[T](
     operation: Callable[[TryContext], T],
     *,
     catch: None = None,
-    retry: int = 0,
+    retry: int | RetryPolicy[Exception] | None = 0,
 ) -> Result[T, Exception]: ...
 
 
@@ -79,7 +321,7 @@ def try_result[T, E](
     operation: Callable[[TryContext], T],
     *,
     catch: Callable[[Exception], E],
-    retry: int = 0,
+    retry: int | RetryPolicy[E] | None = 0,
 ) -> Result[T, E]: ...
 
 
@@ -87,100 +329,76 @@ def try_result[T](
     operation: Callable[[TryContext], T],
     *,
     catch: Callable[[Exception], object] | None = None,
-    retry: int = 0,
+    retry: int | RetryPolicy[object] | None = 0,
 ) -> Result[T, object]:
-    """Execute a synchronous operation and return expected exceptions as Err."""
-    if retry < 0:
-        _raise_retry_policy_error("retry must be non-negative")
-
+    """Execute a synchronous operation with optional bounded retries."""
+    retry_policy = _coerce_retry_policy(retry)
     context = TryContext(attempt=1)
-    retry_index = 0
     while True:
         try:
             return cast("Result[T, object]", Ok(operation(context)))
         except Exception as cause:
             mapped = catch(cause) if catch is not None else cause
-            if retry_index >= retry:
+            if retry_policy is None:
                 return cast("Result[T, object]", Err(mapped))
-            retry_index += 1
-            context = TryContext(attempt=context.attempt + 1)
-
-
-def _raise_retry_policy_error(message: str) -> NoReturn:
-    raise ValueError(message)
-
-
-def _validate_retry_policy[E](policy: RetryPolicy[E]) -> None:
-    if policy.times < 0:
-        _raise_retry_policy_error("retry times must be non-negative")
-    if policy.backoff not in ("constant", "linear", "exponential"):
-        _raise_retry_policy_error(
-            "retry backoff must be constant, linear, or exponential"
-        )
-
-    if isinstance(policy.jitter, bool):
-        jitter_factor = 1.0 if policy.jitter else 0.0
-    else:
-        jitter_factor = policy.jitter
-        if not math.isfinite(jitter_factor) or not 0 <= jitter_factor <= 1:
-            _raise_retry_policy_error(
-                "retry jitter must be a finite number between 0 and 1"
+            decision = retry_policy.decide(
+                RetryContext(
+                    error=mapped,
+                    attempt=context.attempt,
+                )
             )
-
-    if callable(policy.delay):
-        if policy.backoff != "constant":
-            _raise_retry_policy_error("dynamic retry delay cannot use backoff")
-        if jitter_factor:
-            _raise_retry_policy_error("dynamic retry delay cannot use jitter")
-        return
-
-    delay = cast("float", policy.delay)
-    if not math.isfinite(delay) or delay < 0:
-        _raise_retry_policy_error("retry delay must be a finite non-negative number")
-
-
-def _retry_delay[E](
-    policy: RetryPolicy[E],
-    error: E,
-    context: TryContext,
-    retry_index: int,
-) -> float:
-    if callable(policy.delay):
-        delay_fn = cast("Callable[[E, TryContext], float]", policy.delay)
-        delay = delay_fn(error, context)
-    else:
-        base_delay = cast("float", policy.delay)
-        if policy.backoff == "constant":
-            delay = base_delay
-        elif policy.backoff == "linear":
-            delay = base_delay * (retry_index + 1)
-        else:
-            delay = base_delay * 2**retry_index
-
-    delay = float(delay)
-    if not math.isfinite(delay) or delay < 0:
-        _raise_retry_policy_error("retry delay must be a finite non-negative number")
-
-    if callable(policy.delay) or not policy.jitter:
-        return delay
-    jitter_factor = 1.0 if policy.jitter is True else policy.jitter
-    return delay * (1 - jitter_factor + random.SystemRandom().random() * jitter_factor)
+            if isinstance(decision, StopRetry):
+                return cast("Result[T, object]", Err(mapped))
+            assert isinstance(decision, RetryAfter)
+            time.sleep(decision.delay)
+            context = TryContext(attempt=context.attempt + 1)
 
 
 async def _wait_for_retry(
     delay: float,
     cancel_token: CancellationToken | None,
-) -> bool:
+) -> None:
     if cancel_token is None:
         await asyncio.sleep(delay)
-        return True
-    if cancel_token.is_cancelled:
-        return False
+        return
     try:
         await asyncio.wait_for(cancel_token.wait(), timeout=delay)
     except TimeoutError:
-        return True
-    return False
+        if not cancel_token.is_cancelled:
+            return
+    cancel_token.raise_if_cancelled()
+
+
+async def _await_with_cancellation[T](
+    awaitable: Awaitable[T],
+    cancel_token: CancellationToken,
+) -> T:
+    """Best-effort cancel an in-flight awaitable when the token is cancelled."""
+    operation_task = asyncio.ensure_future(awaitable)
+    cancellation_task = asyncio.create_task(cancel_token.wait())
+    try:
+        done, _ = await asyncio.wait(
+            (operation_task, cancellation_task),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if operation_task in done:
+            return await operation_task
+
+        operation_task.cancel()
+        await asyncio.gather(operation_task, return_exceptions=True)
+        cancelled_by_token = True
+    except asyncio.CancelledError:
+        operation_task.cancel()
+        await asyncio.gather(operation_task, return_exceptions=True)
+        raise
+    finally:
+        if not cancellation_task.done():
+            cancellation_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cancellation_task
+
+    assert cancelled_by_token
+    raise asyncio.CancelledError
 
 
 async def _map_async_exception[E](
@@ -200,7 +418,7 @@ async def try_async[T](
     operation: Callable[[TryContext], Awaitable[T]],
     *,
     catch: None = None,
-    retry: RetryPolicy[Exception] | None = None,
+    retry: int | RetryPolicy[Exception] | None = None,
     cancel_token: CancellationToken | None = None,
 ) -> Result[T, Exception]: ...
 
@@ -210,7 +428,7 @@ async def try_async[T, E](
     operation: Callable[[TryContext], Awaitable[T]],
     *,
     catch: Callable[[Exception], E | Awaitable[E]],
-    retry: RetryPolicy[E] | None = None,
+    retry: int | RetryPolicy[E] | None = None,
     cancel_token: CancellationToken | None = None,
 ) -> Result[T, E]: ...
 
@@ -219,33 +437,49 @@ async def try_async[T](
     operation: Callable[[TryContext], Awaitable[T]],
     *,
     catch: Callable[[Exception], object | Awaitable[object]] | None = None,
-    retry: RetryPolicy[object] | None = None,
+    retry: int | RetryPolicy[object] | None = None,
     cancel_token: CancellationToken | None = None,
 ) -> Result[T, object]:
     """Execute an async operation with optional mapping and bounded retries."""
-    if retry is not None:
-        _validate_retry_policy(retry)
-
+    retry_policy = _coerce_retry_policy(retry)
     context = TryContext(attempt=1, cancel_token=cancel_token)
-    retry_index = 0
     while True:
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
         try:
-            return cast("Result[T, object]", Ok(await operation(context)))
+            awaitable = operation(context)
+            if cancel_token is None:
+                value = await awaitable
+            else:
+                value = await _await_with_cancellation(awaitable, cancel_token)
+            if cancel_token is not None:
+                cancel_token.raise_if_cancelled()
+            return cast("Result[T, object]", Ok(value))
         except Exception as cause:
-            error = await _map_async_exception(cause, catch)
-            if retry is None or retry_index >= retry.times:
+            if cancel_token is not None:
+                cancel_token.raise_if_cancelled()
+            if cancel_token is None:
+                error = await _map_async_exception(cause, catch)
+            else:
+                error = await _await_with_cancellation(
+                    _map_async_exception(cause, catch),
+                    cancel_token,
+                )
+            if cancel_token is not None:
+                cancel_token.raise_if_cancelled()
+            if retry_policy is None:
                 return cast("Result[T, object]", Err(error))
-            if retry.should_retry is not None and not retry.should_retry(
-                error, context
-            ):
-                return cast("Result[T, object]", Err(error))
-            should_continue = await _wait_for_retry(
-                _retry_delay(retry, error, context, retry_index),
-                cancel_token,
+            decision = retry_policy.decide(
+                RetryContext(
+                    error=error,
+                    attempt=context.attempt,
+                    cancel_token=cancel_token,
+                )
             )
-            if not should_continue:
+            if isinstance(decision, StopRetry):
                 return cast("Result[T, object]", Err(error))
-            retry_index += 1
+            assert isinstance(decision, RetryAfter)
+            await _wait_for_retry(decision.delay, cancel_token)
             context = TryContext(
                 attempt=context.attempt + 1,
                 cancel_token=cancel_token,

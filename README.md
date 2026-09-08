@@ -56,6 +56,13 @@ pip install py-better-result
 
 `py-better-result` requires Python 3.12 or newer. The runtime dependency is `typing-extensions`.
 
+## Examples
+
+Runnable, focused examples for composition, validation, async workflows,
+cancellation, retries, collections, and codecs are in [`examples/`](examples/README.md).
+Start with
+[`examples/basic/`](examples/basic/README.md) for the smallest complete workflow.
+
 ## Why use a Result?
 
 Use a `Result` when failure is an expected part of an operation—validation, a missing record, a rejected request, or a downstream service error. The error stays in the return type instead of being hidden in a broad `try`/`except` or collapsed into `None`.
@@ -157,12 +164,12 @@ assert result == Err(
 )
 ```
 
-`try_result` accepts `retry=<number>` for immediate synchronous retries. For asynchronous operations, `RetryPolicy` supports bounded retries, constant/linear/exponential backoff, jitter, a `should_retry` predicate, and cooperative cancellation:
+Both `try_result` and `try_async` accept the same bounded `RetryPolicy`. An integer remains shorthand for immediate retries. Prefer the named policy constructors when a delay schedule is needed:
 
 ```python
 import asyncio
 
-from better_result import Ok, RetryPolicy, TryContext, try_async
+from better_result import RetryPolicy, TryContext, try_async
 
 
 async def fetch(context: TryContext) -> str:
@@ -175,11 +182,10 @@ async def main() -> None:
     result = await try_async(
         fetch,
         catch=str,
-        retry=RetryPolicy(
+        retry=RetryPolicy[str].exponential(
             times=3,  # retries after the first attempt
-            delay=0,
-            backoff="exponential",
-            should_retry=lambda error, _: "timeout" in error.lower(),
+            initial_delay=0,
+            should_retry=lambda context: "timeout" in context.error.lower(),
         ),
     )
     print(result)
@@ -188,11 +194,29 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+`RetryPolicy.constant`, `.linear`, `.exponential`, and `.dynamic` use typed schedule values internally. When a callback does not provide enough information to infer the mapped error type, specialize the policy explicitly, as above. For direct composition, type the callback and compose the schedule explicitly:
+
+```python
+from better_result import DynamicDelay, RetryContext, RetryPolicy
+
+
+def delay_for_attempt(context: RetryContext[str]) -> float:
+    return context.attempt / 10
+
+
+dynamic_policy = RetryPolicy[str].from_schedule(
+    times=2,
+    schedule=DynamicDelay(delay_for_attempt),
+)
+```
+
 ```text
 Ok(value='response body')
 ```
 
-`TryContext.attempt` starts at `1`. `CancellationToken` can stop a retry wait and is passed to each async attempt through `TryContext.cancel_token`. Cancellation exceptions themselves are not swallowed.
+`TryContext.attempt` starts at `1`. A policy receives a separate `RetryContext` containing the mapped error, attempt number, and optional cancellation token. Retry schedules derive their zero-based retry position from `attempt`; custom delay and retry predicates receive the context as their only argument. `CancellationToken` is best-effort: `try_async` monitors it, cancels an in-flight operation task, checks it before and after attempts, and interrupts retry waits. Ordinary async operations do not need to check the token themselves. Cancellation raises `asyncio.CancelledError`; it is not returned as a domain `Err`.
+
+Cancellation still follows Python's async cancellation boundaries. CPU-bound code, blocking calls, or dependencies that suppress `CancelledError` may not stop immediately. Code that needs tighter responsiveness can optionally call `context.cancel_token.raise_if_cancelled()` while processing work. Native task cancellation is likewise propagated.
 
 ## Collect or partition Results
 
@@ -249,7 +273,8 @@ Use `async_codec` when schemas are asynchronous. The `serialize_unsafe` and `des
 The package exports:
 
 - Core types: `Result`, `Ok`, `Err`, `UnwrapError`, `is_ok`, `is_err`
-- Async and sync operations: `try_result`, `try_async`, `RetryPolicy`, `TryContext`, `CancellationToken`
+- Async and sync operations: `try_result`, `try_async`, `RetryPolicy`, `TryContext`, `RetryContext`, `CancellationToken`
+- Retry ADTs: `RetryAfter`, `StopRetry`, `ConstantDelay`, `LinearBackoff`, `ExponentialBackoff`, `DynamicDelay`, `Jittered`
 - Collection operations: `all_results`, `all_results_async`, `partition_results`, `partition_results_async`, `flatten_result`
 - Codecs: `codec`, `async_codec`, `ResultCodec`, `AsyncResultCodec`
 - Codec types: `SchemaFailure`, `CodecIssue`, `SerializedOk`, `SerializedErr`, `SerializedResult`, `SyncSchema`, `AsyncSchema`, `ResultSerializationError`, `ResultDeserializationError`
@@ -257,7 +282,7 @@ The package exports:
 ## Development
 
 ```bash
-uv sync
+uv sync --all-packages
 uv run pytest
 uv run pytest --cov
 uv run ruff check .

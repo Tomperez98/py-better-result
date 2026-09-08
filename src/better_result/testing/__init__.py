@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .codec_helpers import (
+from better_result.testing.codec_helpers import (
     assert_async_codec_roundtrip,
     assert_codec_roundtrip,
 )

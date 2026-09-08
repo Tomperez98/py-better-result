@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ._codec import (
+from better_result._codec import (
     AsyncResultCodec,
     AsyncSchema,
     CodecIssue,
@@ -17,8 +17,8 @@ from ._codec import (
     async_codec,
     codec,
 )
-from ._core import Err, Ok, Result, UnwrapError, is_err, is_ok
-from ._operations import (
+from better_result._core import Err, Ok, Result, UnwrapError, is_err, is_ok
+from better_result._operations import (
     CancellationToken,
     ConstantDelay,
     DynamicDelay,

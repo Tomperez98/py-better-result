@@ -24,9 +24,14 @@ ignore = [
 ]
 
 [lint.isort]
+force-single-line = false
 combine-as-imports = true
+force-sort-within-sections = true
 required-imports = ["from __future__ import annotations"]
 
 [lint.per-file-ignores]
 "**/tests/**/*.py" = ["SLF001"]
 "examples/**/*.py" = ["INP001", "T201"]
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"

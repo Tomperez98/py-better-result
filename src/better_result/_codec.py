@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+import inspect
 from typing import Literal, TypedDict, cast
 
-from ._core import Err, Ok, Result, UnwrapError, is_err, is_ok
+from better_result._core import Err, Ok, Result, UnwrapError, is_err, is_ok
 
 
 class CodecIssue(TypedDict, total=False):

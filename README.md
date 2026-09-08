@@ -1,4 +1,4 @@
-# better-result
+# py-better-result
 
 > Credits: [better-result.dev](https://better-result.dev)
 
@@ -45,16 +45,16 @@ Ada
 Using [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv add better-result
+uv add py-better-result
 ```
 
 With pip:
 
 ```bash
-pip install better-result
+pip install py-better-result
 ```
 
-`better-result` requires Python 3.12 or newer. The runtime dependency is `typing-extensions`.
+`py-better-result` requires Python 3.12 or newer. The runtime dependency is `typing-extensions`.
 
 ## Why use a Result?
 

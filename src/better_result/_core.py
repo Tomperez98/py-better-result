@@ -95,10 +95,40 @@ class Result[T, E](ABC):
     def or_else[U, F](self, op: Callable[[E], Result[U, F]]) -> Result[T | U, F]: ...
 
     @abstractmethod
+    async def or_else_async[U, F](
+        self, op: Callable[[E], Awaitable[Result[U, F]]]
+    ) -> Result[T | U, F]: ...
+
+    @abstractmethod
+    def match[U](self, ok: Callable[[T], U], err: Callable[[E], U]) -> U: ...
+
+    @abstractmethod
     def inspect(self, op: Callable[[T], Any]) -> Result[T, E]: ...
 
     @abstractmethod
+    async def inspect_async(
+        self, op: Callable[[T], Awaitable[Any]]
+    ) -> Result[T, E]: ...
+
+    @abstractmethod
     def inspect_err(self, op: Callable[[E], Any]) -> Result[T, E]: ...
+
+    @abstractmethod
+    async def inspect_err_async(
+        self, op: Callable[[E], Awaitable[Any]]
+    ) -> Result[T, E]: ...
+
+    @abstractmethod
+    def inspect_both(
+        self, ok: Callable[[T], Any], err: Callable[[E], Any]
+    ) -> Result[T, E]: ...
+
+    @abstractmethod
+    async def inspect_both_async(
+        self,
+        ok: Callable[[T], Awaitable[Any]],
+        err: Callable[[E], Awaitable[Any]],
+    ) -> Result[T, E]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,12 +223,47 @@ class Ok[T](Result[T, Never]):
         return self
 
     @override
+    async def or_else_async[U, F](
+        self, op: Callable[[Never], Awaitable[Result[U, F]]]
+    ) -> Ok[T]:
+        return self
+
+    @override
+    def match[U](self, ok: Callable[[T], U], err: Callable[[Never], U]) -> U:
+        return ok(self.value)
+
+    @override
     def inspect(self, op: Callable[[T], Any]) -> Ok[T]:
         op(self.value)
         return self
 
     @override
+    async def inspect_async(self, op: Callable[[T], Awaitable[Any]]) -> Ok[T]:
+        await op(self.value)
+        return self
+
+    @override
     def inspect_err(self, op: Callable[[Never], Any]) -> Ok[T]:
+        return self
+
+    @override
+    async def inspect_err_async(self, op: Callable[[Never], Awaitable[Any]]) -> Ok[T]:
+        return self
+
+    @override
+    def inspect_both(
+        self, ok: Callable[[T], Any], err: Callable[[Never], Any]
+    ) -> Ok[T]:
+        ok(self.value)
+        return self
+
+    @override
+    async def inspect_both_async(
+        self,
+        ok: Callable[[T], Awaitable[Any]],
+        err: Callable[[Never], Awaitable[Any]],
+    ) -> Ok[T]:
+        await ok(self.value)
         return self
 
 
@@ -301,12 +366,47 @@ class Err[E](Result[Never, E]):
         return op(self.value)
 
     @override
+    async def or_else_async[T, F](
+        self, op: Callable[[E], Awaitable[Result[T, F]]]
+    ) -> Result[T, F]:
+        return await op(self.value)
+
+    @override
+    def match[U](self, ok: Callable[[Never], U], err: Callable[[E], U]) -> U:
+        return err(self.value)
+
+    @override
     def inspect(self, op: Callable[[Never], Any]) -> Err[E]:
+        return self
+
+    @override
+    async def inspect_async(self, op: Callable[[Never], Awaitable[Any]]) -> Err[E]:
         return self
 
     @override
     def inspect_err(self, op: Callable[[E], Any]) -> Err[E]:
         op(self.value)
+        return self
+
+    @override
+    async def inspect_err_async(self, op: Callable[[E], Awaitable[Any]]) -> Err[E]:
+        await op(self.value)
+        return self
+
+    @override
+    def inspect_both(
+        self, ok: Callable[[Never], Any], err: Callable[[E], Any]
+    ) -> Err[E]:
+        err(self.value)
+        return self
+
+    @override
+    async def inspect_both_async(
+        self,
+        ok: Callable[[Never], Awaitable[Any]],
+        err: Callable[[E], Awaitable[Any]],
+    ) -> Err[E]:
+        await err(self.value)
         return self
 
 

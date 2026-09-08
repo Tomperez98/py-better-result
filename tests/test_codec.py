@@ -17,6 +17,10 @@ from better_result import (
     async_codec,
     codec,
 )
+from tests.codec_helpers import (
+    assert_async_codec_roundtrip,
+    assert_codec_roundtrip,
+)
 
 
 def identity(value: object) -> object:
@@ -31,15 +35,18 @@ def test_codec_serializes_and_deserializes_both_branches() -> None:
         deserialize_err=lambda value: value["code"],
     )
 
-    encoded_ok = result_codec.serialize(Ok("Ada"))
-    encoded_err = result_codec.serialize(Err(404))
-
-    assert encoded_ok == Ok({"status": "ok", "value": {"name": "Ada"}})
-    assert encoded_err == Ok({"status": "error", "error": {"code": 404}})
-    assert isinstance(encoded_ok, Ok)
-    assert isinstance(encoded_err, Ok)
-    assert result_codec.deserialize(encoded_ok.ok_value) == Ok("Ada")
-    assert result_codec.deserialize(encoded_err.ok_value) == Err(404)
+    assert_codec_roundtrip(
+        result_codec,
+        Ok("Ada"),
+        expected_wire={"status": "ok", "value": {"name": "Ada"}},
+        expected_result=Ok("Ada"),
+    )
+    assert_codec_roundtrip(
+        result_codec,
+        Err(404),
+        expected_wire={"status": "error", "error": {"code": 404}},
+        expected_result=Err(404),
+    )
 
 
 def test_codec_returns_expected_errors_without_catching_schema_bugs() -> None:
@@ -132,7 +139,15 @@ async def test_async_codec_accepts_async_schemas() -> None:
         deserialize_err=stringify,
     )
 
-    encoded = await result_codec.serialize(Ok(42))
-    assert encoded == Ok({"status": "ok", "value": "42"})
-    assert isinstance(encoded, Ok)
-    assert await result_codec.deserialize(encoded.ok_value) == Ok("42")
+    await assert_async_codec_roundtrip(
+        result_codec,
+        Ok(42),
+        expected_wire={"status": "ok", "value": "42"},
+        expected_result=Ok("42"),
+    )
+    await assert_async_codec_roundtrip(
+        result_codec,
+        Err(404),
+        expected_wire={"status": "error", "error": "404"},
+        expected_result=Err("404"),
+    )

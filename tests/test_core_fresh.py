@@ -118,6 +118,30 @@ def test_active_and_inactive_sync_operations() -> None:
     assert calls == ["ok:2", "err:bad"]
 
 
+def test_match_and_inspect_both_select_only_the_active_branch() -> None:
+    success = Ok(2)
+    failure = Err("bad")
+    calls: list[str] = []
+
+    assert success.match(ok=lambda value: value * 2, err=lambda _: 0) == 4
+    assert failure.match(ok=lambda _: 0, err=str.upper) == "BAD"
+    assert (
+        success.inspect_both(
+            ok=lambda value: calls.append(f"ok:{value}"),
+            err=lambda _: pytest.fail("err callback ran"),
+        )
+        is success
+    )
+    assert (
+        failure.inspect_both(
+            ok=lambda _: pytest.fail("ok callback ran"),
+            err=lambda error: calls.append(f"err:{error}"),
+        )
+        is failure
+    )
+    assert calls == ["ok:2", "err:bad"]
+
+
 def test_unwrap_and_fallback_operations() -> None:
     success = Ok(3)
     failure = Err("bad")
@@ -180,6 +204,55 @@ async def test_async_operations_short_circuit_and_validate() -> None:
         )
         is failure
     )
+    assert await failure.or_else_async(
+        lambda error: _constant(Ok(error.upper()))
+    ) == Ok("BAD")
+    assert (
+        await success.or_else_async(lambda _: pytest.fail("or_else_async callback ran"))
+        is success
+    )
+
+    async_calls: list[str] = []
+    assert (
+        await success.inspect_async(
+            lambda value: _constant(async_calls.append(f"ok:{value}")),
+        )
+        is success
+    )
+    assert (
+        await failure.inspect_err_async(
+            lambda error: _constant(async_calls.append(f"err:{error}")),
+        )
+        is failure
+    )
+    assert (
+        await success.inspect_both_async(
+            ok=lambda value: _constant(async_calls.append(f"both-ok:{value}")),
+            err=lambda _: pytest.fail("async err callback ran"),
+        )
+        is success
+    )
+    assert async_calls == ["ok:2", "err:bad", "both-ok:2"]
+    assert (
+        await success.inspect_err_async(
+            lambda _: pytest.fail("async inactive err callback ran"),
+        )
+        is success
+    )
+    assert (
+        await failure.inspect_async(
+            lambda _: pytest.fail("async inactive ok callback ran"),
+        )
+        is failure
+    )
+    assert (
+        await failure.inspect_both_async(
+            ok=lambda _: pytest.fail("async inactive both ok callback ran"),
+            err=lambda error: _constant(async_calls.append(f"both-err:{error}")),
+        )
+        is failure
+    )
+    assert async_calls == ["ok:2", "err:bad", "both-ok:2", "both-err:bad"]
 
     invalid = cast(
         "Callable[[int], Awaitable[Result[object, object]]]",

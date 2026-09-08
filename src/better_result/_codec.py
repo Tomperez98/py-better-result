@@ -67,16 +67,12 @@ def _envelope(value: object) -> Mapping[object, object] | None:
 
 
 def _require_ok[T, E](value: Result[T, E]) -> Ok[T]:
-    if not isinstance(value, Ok):
-        message = "expected an Ok Result"
-        raise TypeError(message)
+    assert isinstance(value, Ok), "expected an Ok Result"
     return value
 
 
 def _require_err[T, E](value: Result[T, E]) -> Err[E]:
-    if not isinstance(value, Err):
-        message = "expected an Err Result"
-        raise TypeError(message)
+    assert isinstance(value, Err), "expected an Err Result"
     return value
 
 

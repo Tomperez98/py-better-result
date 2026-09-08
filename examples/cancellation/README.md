@@ -7,7 +7,7 @@ Stop in-flight asynchronous work and retry waits with `CancellationToken`.
 From the repository root:
 
 ```bash
-uv run --package example-cancellation python examples/cancellation/main.py
+uv run better-result-example cancellation
 ```
 
 Expected output:

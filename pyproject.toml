@@ -1,6 +1,6 @@
 [project]
 name = "py-better-result"
-version = "1.0.3"
+version = "1.0.4"
 description = "A narrow, typed Result API for Python"
 readme = "README.md"
 authors = [{ name = "Tomperez98", email = "tomasperezalvarez@gmail.com" }]
@@ -16,7 +16,7 @@ build-backend = "uv_build"
 module-name = "better_result"
 
 [tool.uv.workspace]
-members = ["examples/*"]
+members = ["examples/*", "tools/example-runner"]
 
 [dependency-groups]
 dev = [

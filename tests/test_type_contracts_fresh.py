@@ -96,6 +96,12 @@ async def test_async_combinators_have_precise_types() -> None:
 
     assert_type(await success.map_async(to_text), Ok[str])
     assert_type(await failure.map_async(to_text), Err[str])
+
+    async def to_error_length(error: str) -> int:
+        return len(error)
+
+    assert_type(await success.map_err_async(to_error_length), Ok[int])
+    assert_type(await failure.map_err_async(to_error_length), Err[int])
     assert_type(await success.and_then_async(to_result), Result[str, ValueError])
     assert_type(await failure.and_then_async(to_result), Err[str])
 

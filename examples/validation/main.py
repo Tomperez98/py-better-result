@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from better_result import Err, Ok, Result, TryContext, try_result
+from better_result import Err, Ok, Result, capture
 
 
 def parse_port(raw: str) -> Result[int, str]:
     """Parse and validate a TCP port without a broad try/except in the caller."""
-
-    def convert(_context: TryContext) -> int:
-        return int(raw)
-
-    parsed = try_result(convert, catch=str)
+    parsed = capture(lambda: int(raw), catch=str)
     return parsed.and_then(validate_port)
 
 

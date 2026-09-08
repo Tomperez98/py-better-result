@@ -7,7 +7,7 @@ import time
 from typing import TYPE_CHECKING, Never, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable, Iterator
 
 import pytest
 
@@ -20,6 +20,7 @@ from better_result import (
     Jittered,
     LinearBackoff,
     Ok,
+    Result,
     RetryAfter,
     RetryContext,
     RetryPolicy,
@@ -27,9 +28,15 @@ from better_result import (
     TryContext,
     all_results,
     all_results_async,
+    capture,
+    capture_async,
+    collect_results,
+    collect_results_async,
     flatten_result,
     partition_results,
     partition_results_async,
+    traverse,
+    traverse_async,
     try_async,
     try_result,
 )
@@ -228,6 +235,391 @@ def test_try_result_propagates_mapper_bugs() -> None:
 
     with pytest.raises(RuntimeError, match="mapper broken"):
         try_result(_raise_zero, catch=broken_mapper)
+
+
+# --- capture / capture_async ---
+
+
+def test_capture_returns_success_without_context() -> None:
+    assert capture(lambda: 42) == Ok(42)
+
+
+def test_capture_maps_expected_exceptions() -> None:
+    assert capture(lambda: int("bad"), catch=str) == Err(
+        "invalid literal for int() with base 10: 'bad'"
+    )
+
+
+def test_capture_propagates_mapper_defects() -> None:
+    def broken_mapper(_: Exception) -> str:
+        message = "mapper broken"
+        raise RuntimeError(message)
+
+    def divide_one_by_zero() -> float:
+        msg = "division by zero"
+        raise ZeroDivisionError(msg)
+
+    with pytest.raises(RuntimeError, match="mapper broken"):
+        capture(divide_one_by_zero, catch=broken_mapper)
+
+
+@pytest.mark.asyncio
+async def test_capture_async_returns_success() -> None:
+    async def operation() -> int:
+        return 42
+
+    assert await capture_async(operation) == Ok(42)
+
+
+@pytest.mark.asyncio
+async def test_capture_async_maps_expected_exception() -> None:
+    async def operation() -> int:
+        message = "expected"
+        raise ValueError(message)
+
+    assert await capture_async(operation, catch=str) == Err("expected")
+
+
+@pytest.mark.asyncio
+async def test_capture_async_with_async_catch() -> None:
+    async def operation() -> int:
+        msg = "async catch"
+        raise ValueError(msg)
+
+    async def async_catch(exc: Exception) -> str:
+        return str(exc)
+
+    assert await capture_async(operation, catch=async_catch) == Err("async catch")
+
+
+@pytest.mark.asyncio
+async def test_capture_async_awaits_async_catch() -> None:
+    """Exercise the `await mapped` branch in capture_async."""
+
+    async def operation() -> int:
+        msg = "needs await"
+        raise ValueError(msg)
+
+    async def async_catch(exc: Exception) -> str:
+        await asyncio.sleep(0)
+        return str(exc)
+
+    result = await capture_async(operation, catch=async_catch)
+    assert result == Err("needs await")
+
+
+@pytest.mark.asyncio
+async def test_capture_async_propagates_mapper_defects() -> None:
+    async def operation() -> int:
+        msg = "expected"
+        raise ValueError(msg)
+
+    def broken_mapper(_: Exception) -> str:
+        msg = "broken"
+        raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="broken"):
+        await capture_async(operation, catch=broken_mapper)
+
+
+@pytest.mark.asyncio
+async def test_capture_async_returns_exception_without_catch() -> None:
+    """Cover the ``catch is None`` branch when the operation raises."""
+
+    async def operation() -> int:
+        msg = "no catch"
+        raise ValueError(msg)
+
+    result = await capture_async(operation)
+    assert isinstance(result, Err)
+    assert isinstance(result.err_value, ValueError)
+
+
+@pytest.mark.asyncio
+async def test_capture_async_propagates_cancelled_error() -> None:
+    async def operation() -> int:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await capture_async(operation)
+
+
+# --- collect_results / collect_results_async ---
+
+
+def test_collect_results_returns_all_successes() -> None:
+    assert collect_results([Ok(1), Ok(2)]) == Ok((1, 2))
+
+
+def test_collect_results_returns_all_errors_in_input_order() -> None:
+    assert collect_results([Err("first"), Ok(2), Err("third")]) == Err(
+        ("first", "third")
+    )
+
+
+def test_collect_results_empty_input_is_success() -> None:
+    assert collect_results([]) == Ok(())
+
+
+def test_collect_results_preserves_all_errors_when_all_fail() -> None:
+    assert collect_results([Err("a"), Err("b"), Err("c")]) == Err(("a", "b", "c"))
+
+
+@pytest.mark.asyncio
+async def test_collect_results_async_with_pending_awaitables() -> None:
+    """Exercise the await branch for non-Result items."""
+
+    async def ok_op(value: int) -> Ok[int]:
+        await asyncio.sleep(0)
+        return Ok(value)
+
+    # Pass tasks (not coroutines) to ensure the awaitable path is hit
+    task = asyncio.ensure_future(ok_op(42))
+    result = await collect_results_async([task])
+    assert result == Ok((42,))
+
+
+@pytest.mark.asyncio
+async def test_collect_results_async_runs_awaitables_concurrently() -> None:
+    second_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def first() -> Ok[int]:
+        await release_first.wait()
+        return Ok(1)
+
+    async def second() -> Ok[int]:
+        second_started.set()
+        return Ok(2)
+
+    task = asyncio.create_task(collect_results_async([first(), second()]))
+    try:
+        await asyncio.wait_for(second_started.wait(), timeout=1)
+    finally:
+        release_first.set()
+    assert await task == Ok((1, 2))
+
+
+@pytest.mark.asyncio
+async def test_collect_results_async_with_immediate_results() -> None:
+    """Cover the ``isinstance(result, Result)`` branch."""
+    result = await collect_results_async([Ok(1), Ok(2), Ok(3)])
+    assert result == Ok((1, 2, 3))
+
+
+@pytest.mark.asyncio
+async def test_async_collection_operations_preserve_mixed_input_order() -> None:
+    async def delayed(value: int) -> Result[int, str]:
+        await asyncio.sleep(0)
+        return Ok(value)
+
+    def results() -> list[Result[int, str] | Awaitable[Result[int, str]]]:
+        return [Ok(1), delayed(2), Err("bad"), delayed(4)]
+
+    assert await all_results_async(results()) == Err("bad")
+    assert await collect_results_async(results()) == Err(("bad",))
+    assert await partition_results_async(results()) == ([1, 2, 4], ["bad"])
+
+
+@pytest.mark.asyncio
+async def test_async_collection_operations_support_all_awaitable_inputs() -> None:
+    async def result(value: int) -> Result[int, str]:
+        await asyncio.sleep(0)
+        return Ok(value)
+
+    def inputs() -> list[Awaitable[Result[int, str]]]:
+        return [result(1), result(2), result(3)]
+
+    assert await all_results_async(inputs()) == Ok((1, 2, 3))
+    assert await collect_results_async(inputs()) == Ok((1, 2, 3))
+    assert await partition_results_async(inputs()) == ([1, 2, 3], [])
+
+
+@pytest.mark.asyncio
+async def test_collect_results_async_accumulates_errors() -> None:
+    async def slow_ok(value: int) -> Ok[int]:
+        await asyncio.sleep(0)
+        return Ok(value)
+
+    async def slow_err(message: str) -> Err[str]:
+        await asyncio.sleep(0)
+        return Err(message)
+
+    result = await collect_results_async(
+        [slow_ok(1), slow_err("failure"), slow_ok(3), slow_err("also failed")]
+    )
+    assert result == Err(("failure", "also failed"))
+
+
+@pytest.mark.asyncio
+async def test_collect_results_async_all_succeed() -> None:
+    async def slow_ok(value: int) -> Ok[int]:
+        await asyncio.sleep(0)
+        return Ok(value)
+
+    result = await collect_results_async([slow_ok(1), slow_ok(2)])
+    assert result == Ok((1, 2))
+
+
+@pytest.mark.asyncio
+async def test_collect_results_async_empty() -> None:
+    assert await collect_results_async([]) == Ok(())
+
+
+# --- traverse / traverse_async ---
+
+
+def test_traverse_maps_values_into_one_result() -> None:
+    assert traverse((1, 2, 3), lambda value: Ok(value * 2)) == Ok((2, 4, 6))
+
+
+def test_traverse_shorts_circuits_on_first_error() -> None:
+    assert traverse((1, -1, 3), _maybe_fail) == Err("negative")
+
+
+def test_traverse_empty_input() -> None:
+    assert traverse([], Ok) == Ok(())
+
+
+def _maybe_fail(value: int) -> Result[int, str]:
+    if value < 0:
+        return Err("negative")
+    return Ok(value)
+
+
+@pytest.mark.asyncio
+async def test_traverse_async_concurrent_by_default() -> None:
+    steps: list[float] = []
+    started_second = asyncio.Event()
+
+    async def slow_op(value: int) -> Ok[int]:
+        steps.append(value)
+        if value == 1:
+            await asyncio.sleep(0.1)
+        else:
+            started_second.set()
+        return Ok(value)
+
+    task = asyncio.create_task(traverse_async([1, 2], slow_op))
+    await started_second.wait()
+    result = await task
+    assert result == Ok((1, 2))
+
+
+@pytest.mark.asyncio
+async def test_traverse_async_returns_first_error() -> None:
+    async def fail_on_two(value: int) -> Result[int, str]:
+        if value == 2:
+            return Err("error at 2")
+        return Ok(value)
+
+    result = await traverse_async([1, 2, 3], fail_on_two)
+    assert result == Err("error at 2")
+
+
+@pytest.mark.asyncio
+async def test_traverse_async_max_concurrency_limits_active_tasks() -> None:
+    active = 0
+    max_active = 0
+    lock = asyncio.Lock()
+
+    async def track(value: int) -> Ok[int]:
+        nonlocal active, max_active
+        async with lock:
+            active += 1
+            max_active = max(max_active, active)
+        await asyncio.sleep(0.05)
+        async with lock:
+            active -= 1
+        return Ok(value)
+
+    result = await traverse_async([1, 2, 3, 4], track, max_concurrency=2)
+    assert result == Ok((1, 2, 3, 4))
+    assert max_active <= 2
+
+
+@pytest.mark.asyncio
+async def test_traverse_async_bounded_consumes_values_lazily() -> None:
+    consumed = 0
+    release = asyncio.Event()
+    started = asyncio.Event()
+
+    def values() -> Iterator[int]:
+        nonlocal consumed
+        for value in range(10):
+            consumed += 1
+            yield value
+
+    async def operation(value: int) -> Ok[int]:
+        started.set()
+        await release.wait()
+        return Ok(value)
+
+    task = asyncio.create_task(traverse_async(values(), operation, max_concurrency=2))
+    await started.wait()
+    await asyncio.sleep(0)
+    assert consumed == 2
+    release.set()
+    assert await task == Ok(tuple(range(10)))
+
+
+@pytest.mark.asyncio
+async def test_traverse_async_bounded_evaluates_all_values_after_err() -> None:
+    evaluated: list[int] = []
+
+    async def operation(value: int) -> Result[int, str]:
+        evaluated.append(value)
+        if value == 1:
+            return Err("bad")
+        return Ok(value)
+
+    result = await traverse_async(range(5), operation, max_concurrency=2)
+
+    assert result == Err("bad")
+    assert evaluated == [0, 1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_traverse_async_rejects_invalid_concurrency() -> None:
+    async def ok_op(value: int) -> Ok[int]:
+        return Ok(value)
+
+    with pytest.raises(ValueError, match="concurrency"):
+        await traverse_async([1], ok_op, max_concurrency=0)
+    with pytest.raises(ValueError, match="concurrency"):
+        await traverse_async([1], ok_op, max_concurrency=-1)
+    with pytest.raises(ValueError, match="concurrency"):
+        await traverse_async([1], ok_op, max_concurrency=True)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_traverse_async_propagates_unexpected_exceptions() -> None:
+    async def broken(_value: int) -> Ok[int]:
+        msg = "unexpected"
+        raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="unexpected"):
+        await traverse_async([1], broken)
+
+
+@pytest.mark.asyncio
+async def test_traverse_async_empty() -> None:
+    async def never_called(_value: int) -> Ok[int]:
+        pytest.fail("should not be called")
+
+    assert await traverse_async([], never_called) == Ok(())
+
+
+@pytest.mark.asyncio
+async def test_traverse_async_max_concurrency_none_is_unrestricted() -> None:
+    async def ok_op(value: int) -> Ok[int]:
+        return Ok(value)
+
+    result = await traverse_async([1, 2, 3], ok_op, max_concurrency=None)
+    assert result == Ok((1, 2, 3))
+
+
+# --- End of new task tests ---
 
 
 def _raise_zero(_: TryContext) -> Never:

@@ -194,6 +194,15 @@ async def test_async_operations_short_circuit_and_validate() -> None:
         is failure
     )
 
+    async def map_error(error: str) -> int:
+        return len(error)
+
+    assert await failure.map_err_async(map_error) == Err(3)
+    assert (
+        await success.map_err_async(lambda _: pytest.fail("map_err_async callback ran"))
+        is success
+    )
+
     async def next_result(value: int) -> Result[str, Never]:
         return Ok(str(value))
 

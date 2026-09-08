@@ -586,12 +586,31 @@ def partition_results[T, E](
     return values, errors
 
 
-async def _resolve_result[T, E](
-    result: Result[T, E] | Awaitable[Result[T, E]],
-) -> Result[T, E]:
-    if isinstance(result, Result):
-        return cast("Result[T, E]", result)
-    return await result
+async def _resolve_results[T, E](
+    results: Iterable[Result[T, E] | Awaitable[Result[T, E]]],
+) -> list[Result[T, E]]:
+    pending = list(results)
+    awaitables: list[Awaitable[Result[T, E]]] = []
+    indexes: list[int] = []
+
+    for index, result in enumerate(pending):
+        if not isinstance(result, Result):
+            indexes.append(index)
+            awaitables.append(result)
+
+    if not awaitables:
+        # The scan above proves every item is already a Result. Avoid copying
+        # the list on this hot path; the object cast only bridges list invariance.
+        return cast("list[Result[T, E]]", cast("object", pending))
+
+    if len(awaitables) == len(pending):
+        return list(await asyncio.gather(*awaitables))
+
+    resolved = [cast("Result[T, E]", result) for result in pending]
+    awaited = await asyncio.gather(*awaitables)
+    for index, result in zip(indexes, awaited, strict=True):
+        resolved[index] = result
+    return resolved
 
 
 @overload
@@ -640,20 +659,7 @@ async def all_results_async[T, E](
     results: Iterable[Result[T, E] | Awaitable[Result[T, E]]],
 ) -> Result[tuple[T, ...], E]:
     """Await Results concurrently, then collect successes in input order."""
-    pending = list(results)
-    immediate: list[Result[T, E]] = []
-    all_immediate = True
-    for result in pending:
-        if isinstance(result, Result):
-            immediate.append(result)
-        else:
-            all_immediate = False
-    if all_immediate:
-        return all_results(immediate)
-    resolved = cast(
-        "list[Result[T, E]]",
-        await asyncio.gather(*(_resolve_result(result) for result in pending)),
-    )
+    resolved = await _resolve_results(results)
     return all_results(resolved)
 
 
@@ -703,18 +709,264 @@ async def partition_results_async[T, E](
     results: Iterable[Result[T, E] | Awaitable[Result[T, E]]],
 ) -> tuple[list[T], list[E]]:
     """Await Results concurrently, then partition values in input order."""
-    pending = list(results)
-    immediate: list[Result[T, E]] = []
-    all_immediate = True
-    for result in pending:
-        if isinstance(result, Result):
-            immediate.append(result)
-        else:
-            all_immediate = False
-    if all_immediate:
-        return partition_results(immediate)
-    resolved = cast(
-        "list[Result[T, E]]",
-        await asyncio.gather(*(_resolve_result(result) for result in pending)),
-    )
+    resolved = await _resolve_results(results)
     return partition_results(resolved)
+
+
+# --- capture / capture_async ---
+
+
+@overload
+def capture[T](
+    operation: Callable[[], T],
+    *,
+    catch: None = None,
+) -> Result[T, Exception]: ...
+
+
+@overload
+def capture[T, E](
+    operation: Callable[[], T],
+    *,
+    catch: Callable[[Exception], E],
+) -> Result[T, E]: ...
+
+
+def capture[T](
+    operation: Callable[[], T],
+    *,
+    catch: Callable[[Exception], object] | None = None,
+) -> Result[T, object]:
+    """
+    Execute a zero-argument operation and capture expected exceptions.
+
+    Unlike ``try_result``, this helper does not accept a ``TryContext``
+    or a retry policy. Use it at a simple exception boundary where retries
+    are not needed.
+    """
+    try:
+        return cast("Result[T, object]", Ok(operation()))
+    except Exception as cause:
+        mapped = catch(cause) if catch is not None else cause
+        return cast("Result[T, object]", Err(mapped))
+
+
+@overload
+async def capture_async[T](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    catch: None = None,
+) -> Result[T, Exception]: ...
+
+
+@overload
+async def capture_async[T, E](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    catch: Callable[[Exception], Awaitable[E]],
+) -> Result[T, E]: ...
+
+
+@overload
+async def capture_async[T, E](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    catch: Callable[[Exception], E],
+) -> Result[T, E]: ...
+
+
+async def capture_async[T](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    catch: Callable[[Exception], object | Awaitable[object]] | None = None,
+) -> Result[T, object]:
+    """
+    Execute a zero-argument async operation and capture expected exceptions.
+
+    Unlike ``try_async``, this helper does not accept a ``TryContext``,
+    retry policy, or cancellation token. Use it at a simple async exception
+    boundary where retries are not needed.
+    """
+    try:
+        value = await operation()
+        return cast("Result[T, object]", Ok(value))
+    except Exception as cause:
+        if catch is None:
+            return cast("Result[T, object]", Err(cause))
+        mapped = catch(cause)
+        if inspect.isawaitable(mapped):
+            awaited = await mapped
+            mapped = awaited
+        return cast("Result[T, object]", Err(mapped))
+
+
+# --- collect_results / collect_results_async ---
+
+
+@overload
+def collect_results[A, E](
+    results: tuple[Result[A, E]],
+) -> Result[tuple[A], tuple[E]]: ...
+
+
+@overload
+def collect_results[A, E, B, F](
+    results: tuple[Result[A, E], Result[B, F]],
+) -> Result[tuple[A, B], tuple[E | F]]: ...
+
+
+@overload
+def collect_results[A, E, B, F, C, G](
+    results: tuple[Result[A, E], Result[B, F], Result[C, G]],
+) -> Result[tuple[A, B, C], tuple[E | F | G]]: ...
+
+
+@overload
+def collect_results[A, E, B, F, C, G, D, H](
+    results: tuple[Result[A, E], Result[B, F], Result[C, G], Result[D, H]],
+) -> Result[tuple[A, B, C, D], tuple[E | F | G | H]]: ...
+
+
+@overload
+def collect_results[T, E](
+    results: Iterable[Result[T, E]],
+) -> Result[tuple[T, ...], tuple[E, ...]]: ...
+
+
+def collect_results[T, E](
+    results: Iterable[Result[T, E]],
+) -> Result[tuple[T, ...], tuple[E, ...]]:
+    """
+    Accumulate every error instead of returning the first one.
+
+    Unlike ``all_results`` which short-circuits on the first error, this
+    helper evaluates every supplied Result and returns all errors as a
+    tuple. When there are no errors the success values are returned as a
+    tuple in input order.
+    """
+    values: list[T] = []
+    errors: list[E] = []
+    for result in results:
+        if isinstance(result, Ok):
+            values.append(result.ok_value)
+        else:
+            assert isinstance(result, Err)
+            errors.append(result.err_value)
+    if errors:
+        return Err(tuple(errors))
+    return Ok(tuple(values))
+
+
+@overload
+async def collect_results_async[A, E](
+    results: tuple[Result[A, E] | Awaitable[Result[A, E]]],
+) -> Result[tuple[A], tuple[E]]: ...
+
+
+@overload
+async def collect_results_async[A, E, B, F](
+    results: tuple[
+        Result[A, E] | Awaitable[Result[A, E]],
+        Result[B, F] | Awaitable[Result[B, F]],
+    ],
+) -> Result[tuple[A, B], tuple[E | F]]: ...
+
+
+@overload
+async def collect_results_async[A, E, B, F, C, G](
+    results: tuple[
+        Result[A, E] | Awaitable[Result[A, E]],
+        Result[B, F] | Awaitable[Result[B, F]],
+        Result[C, G] | Awaitable[Result[C, G]],
+    ],
+) -> Result[tuple[A, B, C], tuple[E | F | G]]: ...
+
+
+@overload
+async def collect_results_async[A, E, B, F, C, G, D, H](
+    results: tuple[
+        Result[A, E] | Awaitable[Result[A, E]],
+        Result[B, F] | Awaitable[Result[B, F]],
+        Result[C, G] | Awaitable[Result[C, G]],
+        Result[D, H] | Awaitable[Result[D, H]],
+    ],
+) -> Result[tuple[A, B, C, D], tuple[E | F | G | H]]: ...
+
+
+@overload
+async def collect_results_async[T, E](
+    results: Iterable[Result[T, E] | Awaitable[Result[T, E]]],
+) -> Result[tuple[T, ...], tuple[E, ...]]: ...
+
+
+async def collect_results_async[T, E](
+    results: Iterable[Result[T, E] | Awaitable[Result[T, E]]],
+) -> Result[tuple[T, ...], tuple[E, ...]]:
+    """Resolve Results concurrently, then accumulate errors in input order."""
+    resolved = await _resolve_results(results)
+    return collect_results(resolved)
+
+
+# --- traverse / traverse_async ---
+
+
+def _validate_concurrency(value: object) -> None:
+    message = "max_concurrency must be a positive integer or None"
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(message)  # noqa: TRY004
+    if value <= 0:
+        raise ValueError(message)
+
+
+def traverse[A, T, E](
+    values: Iterable[A],
+    operation: Callable[[A], Result[T, E]],
+) -> Result[tuple[T, ...], E]:
+    """
+    Apply a Result-returning operation over input values and short-circuit.
+
+    Returns the first error in input order, or a tuple of all success values.
+    This is the same short-circuit semantics as ``all_results``.
+    """
+    values_out: list[T] = []
+    for value in values:
+        result = operation(value)
+        if isinstance(result, Ok):
+            values_out.append(result.ok_value)
+            continue
+        assert isinstance(result, Err)
+        return Err(result.err_value)
+    return Ok(tuple(values_out))
+
+
+async def traverse_async[A, T, E](
+    values: Iterable[A],
+    operation: Callable[[A], Awaitable[Result[T, E]]],
+    *,
+    max_concurrency: int | None = None,
+) -> Result[tuple[T, ...], E]:
+    """Apply an async Result-returning operation with optional concurrency limit."""
+    if max_concurrency is not None:
+        _validate_concurrency(max_concurrency)
+
+    if max_concurrency is None:
+        return await all_results_async(operation(value) for value in values)
+
+    iterator = iter(values)
+    ordered: list[Result[T, E] | None] = []
+
+    async def worker() -> None:
+        while True:
+            try:
+                value = next(iterator)
+            except StopIteration:
+                return
+            index = len(ordered)
+            ordered.append(None)
+            ordered[index] = await operation(value)
+
+    await asyncio.gather(*(worker() for _ in range(max_concurrency)))
+    # Every worker fills its reserved slot before gather() completes. Avoid a
+    # second O(n) list copy while narrowing the sentinel-based working list.
+    resolved = cast("list[Result[T, E]]", cast("object", ordered))
+    return all_results(resolved)

@@ -61,7 +61,13 @@ pip install py-better-result
 Runnable, focused examples for composition, validation, async workflows,
 cancellation, retries, collections, and codecs are in [`examples/`](examples/README.md).
 Start with
-[`examples/basic/`](examples/basic/README.md) for the smallest complete workflow.
+[`examples/basic/`](examples/basic/README.md) for the smallest complete workflow:
+
+```bash
+uv run better-result-example basic
+```
+
+List all runnable examples with `uv run better-result-example --list`, or run them all with `uv run better-result-example --all`.
 
 ## Why use a Result?
 
@@ -117,10 +123,13 @@ elif is_err(result):
 | `inspect(fn)` / `inspect_err(fn)` | only the selected branch | the original `Result`, for side effects |
 
 `unwrap()` and `expect(message)` return the success value but raise `UnwrapError` on `Err`. Their counterparts `unwrap_err()` and `expect_err()` select the error branch. Prefer `unwrap_or`, `unwrap_or_else`, or explicit matching when failure is expected.
+`UnwrapError` inherits from `BaseException` intentionally: selecting the wrong
+branch is treated like a programmer-error/panic signal, not an expected domain
+failure, so it is not caught by `except Exception`.
 
 ## Async workflows
 
-The core combinators have async forms: `map_async`, `and_then_async`, `or_else_async`, `inspect_async`, `inspect_err_async`, and `inspect_both_async`.
+The core combinators have async forms: `map_async`, `map_err_async`, `and_then_async`, `or_else_async`, `inspect_async`, `inspect_err_async`, and `inspect_both_async`.
 
 ```python
 import asyncio
@@ -148,7 +157,20 @@ Async callbacks are only awaited for the active branch. A failed `Result` theref
 
 ## Capture exceptions and retry operations
 
-Use `try_result` or `try_async` at a boundary where an exception is an expected failure mode. Without a mapper, the exception itself becomes the error value; `catch` can convert it into a domain error.
+Use `capture` or `capture_async` for a one-shot exception boundary. They accept
+zero-argument operations, so simple parsing code does not need an unused
+`TryContext`:
+
+```python
+from better_result import Ok, capture
+
+result = capture(lambda: int("42"), catch=str)
+assert result == Ok(42)
+```
+
+Use `try_result` or `try_async` when the operation needs attempt context or a
+bounded retry policy. Without a mapper, the exception itself becomes the error
+value; `catch` can convert it into a domain error.
 
 ```python
 from better_result import Err, TryContext, try_result
@@ -220,10 +242,10 @@ Delayed `try_result` retries use blocking `time.sleep()` and do not accept a can
 
 Cancellation still follows Python's async cancellation boundaries. CPU-bound code, blocking calls, or dependencies that suppress `CancelledError` may not stop immediately. Code that needs tighter responsiveness can optionally call `context.cancel_token.raise_if_cancelled()` while processing work. Native task cancellation is likewise propagated.
 
-## Collect or partition Results
+## Collect, validate, or traverse Results
 
 ```python
-from better_result import Err, Ok, all_results, partition_results
+from better_result import Err, Ok, all_results, collect_results, partition_results
 
 
 all_results([Ok(1), Ok(2)])
@@ -232,14 +254,25 @@ all_results([Ok(1), Ok(2)])
 all_results([Ok(1), Err("database unavailable"), Ok(3)])
 # Err(value="database unavailable")
 
+collect_results([Ok(1), Err("bad input"), Err("also bad")])
+# Err(value=("bad input", "also bad"))
+
 partition_results([Ok(1), Err("bad input"), Ok(2)])
 # ([1, 2], ["bad input"])
 ```
 
 - `all_results` returns every success in a tuple, or the first error in input order.
+- `collect_results` evaluates every supplied result and returns all errors in an ordered tuple; use it for independent validation.
 - `partition_results` returns `(success_values, error_values)` while preserving the relative order of each list.
+- `traverse(values, operation)` applies a synchronous Result-returning operation and uses `all_results` semantics.
+- `traverse_async(values, operation, max_concurrency=...)` applies an async operation concurrently while optionally bounding active work and preserving input order.
 - `flatten_result` turns `Result[Result[T, E], F]` into `Result[T, E | F]`.
-- `all_results_async` and `partition_results_async` accept `Result` values or awaitables, await them concurrently, and preserve input order.
+- `all_results_async`, `collect_results_async`, and `partition_results_async` accept `Result` values or awaitables, await them concurrently, and preserve input order.
+
+An `Err` returned by an async operation is a domain result, not an exception;
+async collection helpers do not silently cancel sibling operations because one
+operation returned an `Err`. Native task cancellation and exceptions still
+propagate.
 
 ## Encode and decode at boundaries
 
@@ -275,9 +308,9 @@ Use `async_codec` when schemas are asynchronous. The `serialize_unsafe` and `des
 The package exports:
 
 - Core types: `Result`, `Ok`, `Err`, `UnwrapError`, `is_ok`, `is_err`
-- Async and sync operations: `try_result`, `try_async`, `RetryPolicy`, `TryContext`, `RetryContext`, `CancellationToken`
+- Async and sync operations: `capture`, `capture_async`, `try_result`, `try_async`, `RetryPolicy`, `TryContext`, `RetryContext`, `CancellationToken`
 - Retry ADTs: `RetryAfter`, `StopRetry`, `ConstantDelay`, `LinearBackoff`, `ExponentialBackoff`, `DynamicDelay`, `Jittered`
-- Collection operations: `all_results`, `all_results_async`, `partition_results`, `partition_results_async`, `flatten_result`
+- Collection operations: `all_results`, `all_results_async`, `collect_results`, `collect_results_async`, `partition_results`, `partition_results_async`, `traverse`, `traverse_async`, `flatten_result`
 - Codecs: `codec`, `async_codec`, `ResultCodec`, `AsyncResultCodec`
 - Codec types: `SchemaFailure`, `CodecIssue`, `SerializedOk`, `SerializedErr`, `SerializedResult`, `SyncSchema`, `AsyncSchema`, `ResultSerializationError`, `ResultDeserializationError`
 

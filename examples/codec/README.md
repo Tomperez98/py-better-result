@@ -8,7 +8,7 @@ keeping schema failures typed.
 From the repository root:
 
 ```bash
-uv run --package example-codec python examples/codec/main.py
+uv run better-result-example codec
 ```
 
 Expected output:

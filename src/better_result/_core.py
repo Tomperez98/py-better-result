@@ -84,6 +84,9 @@ class Result[T, E](ABC):
     def map_err(self, op: Callable[[E], F]) -> Result[T, F]: ...
 
     @abstractmethod
+    async def map_err_async(self, op: Callable[[E], Awaitable[F]]) -> Result[T, F]: ...
+
+    @abstractmethod
     def and_then[U, F](self, op: Callable[[T], Result[U, F]]) -> Result[U, E | F]: ...
 
     @abstractmethod
@@ -204,6 +207,10 @@ class Ok[T](Result[T, Never]):
 
     @override
     def map_err(self, op: Callable[[Never], F]) -> Ok[T]:
+        return self
+
+    @override
+    async def map_err_async(self, op: Callable[[Never], Awaitable[F]]) -> Ok[T]:
         return self
 
     @override
@@ -350,6 +357,10 @@ class Err[E](Result[Never, E]):
     @override
     def map_err(self, op: Callable[[E], F]) -> Err[F]:
         return Err(op(self.value))
+
+    @override
+    async def map_err_async(self, op: Callable[[E], Awaitable[F]]) -> Err[F]:
+        return Err(await op(self.value))
 
     @override
     def and_then[U, F](self, op: Callable[[Never], Result[U, F]]) -> Err[E]:

@@ -1,8 +1,10 @@
-"""Retry an expected exception with a bounded, typed retry policy."""
+"""Retry expected exceptions with bounded, typed retry policies."""
 
 from __future__ import annotations
 
-from better_result import RetryContext, RetryPolicy, TryContext, try_result
+import asyncio
+
+from better_result import RetryContext, RetryPolicy, TryContext, try_async, try_result
 
 
 def main() -> None:
@@ -57,6 +59,29 @@ def main() -> None:
     print(dynamic_result)
     print(f"dynamic_attempts={dynamic_attempts}")
     print(f"dynamic_delays={dynamic_delays}")
+
+    asyncio.run(async_demo())
+
+
+async def async_request(context: TryContext) -> str:
+    if context.attempt == 1:
+        message = "temporary async failure"
+        raise TimeoutError(message)
+    return "async response"
+
+
+async def async_demo() -> None:
+    result = await try_async(
+        async_request,
+        catch=str,
+        retry=RetryPolicy[str].exponential(
+            times=2,
+            initial_delay=0,
+            jitter=0.25,
+            should_retry=lambda context: "temporary" in context.error,
+        ),
+    )
+    print(result)
 
 
 if __name__ == "__main__":

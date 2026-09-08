@@ -7,6 +7,7 @@ import inspect
 import math
 import random
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn, cast, overload
 
@@ -17,7 +18,7 @@ from ._core import Err, Ok, Result
 
 
 class CancellationToken:
-    """Cooperative cancellation signal for async operations and retry waits."""
+    """Best-effort cancellation signal for async operations and retry waits."""
 
     __slots__ = ("_event",)
 
@@ -369,6 +370,38 @@ async def _wait_for_retry(
     raise asyncio.CancelledError
 
 
+async def _await_with_cancellation[T](
+    awaitable: Awaitable[T],
+    cancel_token: CancellationToken,
+) -> T:
+    """Best-effort cancel an in-flight awaitable when the token is cancelled."""
+    operation_task = asyncio.ensure_future(awaitable)
+    cancellation_task = asyncio.create_task(cancel_token.wait())
+    try:
+        done, _ = await asyncio.wait(
+            (operation_task, cancellation_task),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if operation_task in done:
+            return await operation_task
+
+        operation_task.cancel()
+        await asyncio.gather(operation_task, return_exceptions=True)
+        cancelled_by_token = True
+    except asyncio.CancelledError:
+        operation_task.cancel()
+        await asyncio.gather(operation_task, return_exceptions=True)
+        raise
+    finally:
+        if not cancellation_task.done():
+            cancellation_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cancellation_task
+
+    assert cancelled_by_token
+    raise asyncio.CancelledError
+
+
 async def _map_async_exception[E](
     cause: Exception,
     catch: Callable[[Exception], E | Awaitable[E]] | None,
@@ -415,14 +448,24 @@ async def try_async[T](
         if cancel_token is not None:
             cancel_token.raise_if_cancelled()
         try:
-            value = await operation(context)
+            awaitable = operation(context)
+            if cancel_token is None:
+                value = await awaitable
+            else:
+                value = await _await_with_cancellation(awaitable, cancel_token)
             if cancel_token is not None:
                 cancel_token.raise_if_cancelled()
             return cast("Result[T, object]", Ok(value))
         except Exception as cause:
             if cancel_token is not None:
                 cancel_token.raise_if_cancelled()
-            error = await _map_async_exception(cause, catch)
+            if cancel_token is None:
+                error = await _map_async_exception(cause, catch)
+            else:
+                error = await _await_with_cancellation(
+                    _map_async_exception(cause, catch),
+                    cancel_token,
+                )
             if cancel_token is not None:
                 cancel_token.raise_if_cancelled()
             if retry_policy is None:

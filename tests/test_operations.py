@@ -255,6 +255,78 @@ async def test_try_async_forwards_cancellation_token_and_stops_retry_delay() -> 
 
 
 @pytest.mark.asyncio
+async def test_try_async_cancels_during_a_retry_wait() -> None:
+    token = CancellationToken()
+    cancel_task: asyncio.Task[None] | None = None
+
+    async def cancel_later() -> None:
+        await asyncio.sleep(0.01)
+        token.cancel()
+
+    async def operation(_: TryContext) -> str:
+        nonlocal cancel_task
+        cancel_task = asyncio.create_task(cancel_later())
+        message = "temporary"
+        raise RuntimeError(message)
+
+    with pytest.raises(asyncio.CancelledError):
+        await try_async(
+            operation,
+            catch=str,
+            cancel_token=token,
+            retry=RetryPolicy.constant(times=1, delay=10),
+        )
+
+    assert cancel_task is not None
+    await cancel_task
+
+
+@pytest.mark.asyncio
+async def test_try_async_cancels_an_in_flight_operation_with_the_token() -> None:
+    token = CancellationToken()
+    operation_started = asyncio.Event()
+    operation_cleaned_up = asyncio.Event()
+
+    async def operation(_: TryContext) -> str:
+        operation_started.set()
+        try:
+            await asyncio.sleep(60)
+        finally:
+            operation_cleaned_up.set()
+        return "unreachable"
+
+    task = asyncio.create_task(try_async(operation, cancel_token=token))
+    await operation_started.wait()
+    token.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=0.05)
+    assert operation_cleaned_up.is_set()
+
+
+@pytest.mark.asyncio
+async def test_try_async_propagates_native_task_cancellation() -> None:
+    operation_started = asyncio.Event()
+    operation_cleaned_up = asyncio.Event()
+
+    async def operation(_: TryContext) -> str:
+        operation_started.set()
+        try:
+            await asyncio.sleep(60)
+        finally:
+            operation_cleaned_up.set()
+        return "unreachable"
+
+    task = asyncio.create_task(try_async(operation, cancel_token=CancellationToken()))
+    await operation_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert operation_cleaned_up.is_set()
+
+
+@pytest.mark.asyncio
 async def test_try_async_captures_errors_and_retries_successful_attempts() -> None:
     attempts: list[int] = []
 

@@ -1,0 +1,12 @@
+[project]
+name = "example-cpu-heavy-cancellation"
+version = "0.1.0"
+description = "CPU-heavy cancellation example for py-better-result"
+requires-python = ">=3.12"
+dependencies = ["py-better-result"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+py-better-result = { workspace = true }

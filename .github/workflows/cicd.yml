@@ -53,7 +53,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: install
-        run: uv sync --locked
+        run: uv sync --locked --all-packages
 
       - name: run tests with coverage
         run: uv run pytest -q --cov

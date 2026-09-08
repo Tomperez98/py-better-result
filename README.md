@@ -56,6 +56,13 @@ pip install py-better-result
 
 `py-better-result` requires Python 3.12 or newer. The runtime dependency is `typing-extensions`.
 
+## Examples
+
+Runnable, focused examples for composition, validation, async workflows,
+cancellation, retries, collections, and codecs are in [`examples/`](examples/README.md).
+Start with
+[`examples/basic/`](examples/basic/README.md) for the smallest complete workflow.
+
 ## Why use a Result?
 
 Use a `Result` when failure is an expected part of an operation—validation, a missing record, a rejected request, or a downstream service error. The error stays in the return type instead of being hidden in a broad `try`/`except` or collapsed into `None`.
@@ -207,14 +214,9 @@ dynamic_policy = RetryPolicy[str].from_schedule(
 Ok(value='response body')
 ```
 
-`TryContext.attempt` starts at `1`. A policy receives a separate `RetryContext` containing the mapped error, attempt number, and optional cancellation token. Retry schedules derive their zero-based retry position from `attempt`; custom delay and retry predicates receive the context as their only argument. `CancellationToken` is cooperative: it is checked before each async attempt, while waiting between retries, and after an attempt completes. Cancellation raises `asyncio.CancelledError`; it is not returned as a domain `Err`. An operation that performs long-running work should also check its token before or during the work:
+`TryContext.attempt` starts at `1`. A policy receives a separate `RetryContext` containing the mapped error, attempt number, and optional cancellation token. Retry schedules derive their zero-based retry position from `attempt`; custom delay and retry predicates receive the context as their only argument. `CancellationToken` is best-effort: `try_async` monitors it, cancels an in-flight operation task, checks it before and after attempts, and interrupts retry waits. Ordinary async operations do not need to check the token themselves. Cancellation raises `asyncio.CancelledError`; it is not returned as a domain `Err`.
 
-```python
-if context.cancel_token is not None:
-    context.cancel_token.raise_if_cancelled()
-```
-
-Native task cancellation is likewise propagated.
+Cancellation still follows Python's async cancellation boundaries. CPU-bound code, blocking calls, or dependencies that suppress `CancelledError` may not stop immediately. Code that needs tighter responsiveness can optionally call `context.cancel_token.raise_if_cancelled()` while processing work. Native task cancellation is likewise propagated.
 
 ## Collect or partition Results
 
@@ -280,7 +282,7 @@ The package exports:
 ## Development
 
 ```bash
-uv sync
+uv sync --all-packages
 uv run pytest
 uv run pytest --cov
 uv run ruff check .

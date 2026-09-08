@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError, is_dataclass
 from typing import TYPE_CHECKING, Never, cast
 
 import pytest
@@ -35,19 +36,48 @@ def test_variants_have_symmetric_shape_and_value_access() -> None:
     assert is_err(failure)
 
 
+def test_variants_support_public_positional_pattern_matching() -> None:
+    success = Ok(3)
+    failure = Err("bad")
+
+    match success:
+        case Ok(value):
+            assert value == 3
+        case _:
+            pytest.fail("Ok did not match its public value")
+
+    match failure:
+        case Err(error):
+            assert error == "bad"
+        case _:
+            pytest.fail("Err did not match its public value")
+
+
+def test_variants_are_frozen_dataclasses() -> None:
+    assert is_dataclass(Ok)
+    assert is_dataclass(Err)
+
+
 def test_variants_are_immutable_and_unhashable() -> None:
     success = Ok(3)
     failure = Err("bad")
 
-    with pytest.raises(AttributeError, match="immutable"):
+    with pytest.raises(FrozenInstanceError):
         success.__setattr__("_value", 4)
-    with pytest.raises(AttributeError, match="immutable"):
+    with pytest.raises(FrozenInstanceError):
         failure.__setattr__("_value", "changed")
+
+    assert Ok.__hash__ is None
+    assert Err.__hash__ is None
 
     with pytest.raises(TypeError):
         hash(success)
     with pytest.raises(TypeError):
         hash(failure)
+    with pytest.raises(TypeError):
+        hash(Ok([]))
+    with pytest.raises(TypeError):
+        hash(Err([]))
 
 
 def test_equality_does_not_cross_subclass_boundaries() -> None:
@@ -80,7 +110,10 @@ def test_active_and_inactive_sync_operations() -> None:
     assert failure.or_else(lambda error: Ok(error.upper())) == Ok("BAD")
     assert success.inspect(lambda value: calls.append(f"ok:{value}")) is success
     assert failure.inspect(lambda _: pytest.fail("inspect callback ran")) is failure
-    assert success.inspect_err(lambda _: pytest.fail("inspect_err callback ran")) is success
+    assert (
+        success.inspect_err(lambda _: pytest.fail("inspect_err callback ran"))
+        is success
+    )
     assert failure.inspect_err(lambda error: calls.append(f"err:{error}")) is failure
     assert calls == ["ok:2", "err:bad"]
 
@@ -132,14 +165,19 @@ async def test_async_operations_short_circuit_and_validate() -> None:
     failure = Err("bad")
 
     assert await success.map_async(lambda value: _constant(value * 2)) == Ok(4)
-    assert await failure.map_async(lambda _: pytest.fail("map_async callback ran")) is failure
+    assert (
+        await failure.map_async(lambda _: pytest.fail("map_async callback ran"))
+        is failure
+    )
 
     async def next_result(value: int) -> Result[str, Never]:
         return Ok(str(value))
 
     assert await success.and_then_async(next_result) == Ok("2")
     assert (
-        await failure.and_then_async(lambda _: pytest.fail("and_then_async callback ran"))
+        await failure.and_then_async(
+            lambda _: pytest.fail("and_then_async callback ran")
+        )
         is failure
     )
 

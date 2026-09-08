@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -24,30 +25,16 @@ F = TypeVar("F")
 TBE = TypeVar("TBE", bound=BaseException)
 
 
+@dataclass(frozen=True, slots=True, repr=False)
 class Ok[T]:
     __match_args__ = ("ok_value",)
-    __slots__ = ("_value",)
     __hash__ = None
 
     _value: T
 
-    def __init__(self, value: T) -> None:
-        object.__setattr__(self, "_value", value)
-
-    @override
-    def __setattr__(self, _name: str, _value: object) -> NoReturn:
-        message = "Ok is immutable"
-        raise AttributeError(message)
-
     @override
     def __repr__(self) -> str:
         return f"Ok({self._value!r})"
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        if type(self) is not type(other) or not isinstance(other, Ok):
-            return False
-        return bool(self._value == other._value)
 
     def is_ok(self) -> Literal[True]:
         return True
@@ -75,6 +62,7 @@ class Ok[T]:
         return self._value
 
     def unwrap_err(self) -> NoReturn:
+
         raise UnwrapError(self, "Called `Result.unwrap_err()` on an `Ok` value")
 
     def unwrap_or(self, _default: U) -> T:
@@ -122,30 +110,16 @@ class Ok[T]:
         return self
 
 
+@dataclass(frozen=True, slots=True, repr=False)
 class Err[E]:
     __match_args__ = ("err_value",)
-    __slots__ = ("_value",)
     __hash__ = None
 
     _value: E
 
-    def __init__(self, value: E) -> None:
-        object.__setattr__(self, "_value", value)
-
-    @override
-    def __setattr__(self, _name: str, _value: object) -> NoReturn:
-        message = "Err is immutable"
-        raise AttributeError(message)
-
     @override
     def __repr__(self) -> str:
         return f"Err({self._value!r})"
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        if type(self) is not type(other) or not isinstance(other, Err):
-            return False
-        return bool(self._value == other._value)
 
     def is_ok(self) -> Literal[False]:
         return False
@@ -233,7 +207,7 @@ type Result[T, E] = Ok[T] | Err[E]
 OkErr: Final = (Ok, Err)
 
 
-class UnwrapError(Exception):
+class UnwrapError(BaseException):
     """Raised when an unwrap or expect operation selects the wrong variant."""
 
     _result: Result[Any, Any]

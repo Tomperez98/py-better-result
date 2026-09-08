@@ -62,6 +62,12 @@ def test_flatten_result_propagates_inner_or_outer_error() -> None:
     assert flatten_result(Err("outer")) == Err("outer")
 
 
+def test_flatten_result_rejects_unknown_result_variants() -> None:
+    invalid = cast("Result[Result[int, str], str]", object())
+    with pytest.raises(TypeError, match="expected a concrete Result variant"):
+        flatten_result(invalid)
+
+
 def test_try_result_captures_expected_exceptions_without_forcing_error_types() -> None:
     assert try_result(lambda _: 42) == Ok(42)
 

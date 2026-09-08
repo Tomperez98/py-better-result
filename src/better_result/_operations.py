@@ -361,13 +361,12 @@ async def _wait_for_retry(
     if cancel_token is None:
         await asyncio.sleep(delay)
         return
-    if cancel_token.is_cancelled:
-        raise asyncio.CancelledError
     try:
         await asyncio.wait_for(cancel_token.wait(), timeout=delay)
     except TimeoutError:
-        return
-    raise asyncio.CancelledError
+        if not cancel_token.is_cancelled:
+            return
+    cancel_token.raise_if_cancelled()
 
 
 async def _await_with_cancellation[T](

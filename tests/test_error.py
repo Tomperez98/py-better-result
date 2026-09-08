@@ -59,7 +59,23 @@ def test_messages_and_properties_are_validated() -> None:
     with pytest.raises(TypeError, match="message"):
         TaggedError(message=cast("str", object()))
 
-    for reserved in ("to_json", "to_dict", "match", "name", "stack"):
+    for reserved in (
+        "to_json",
+        "to_dict",
+        "match",
+        "name",
+        "stack",
+        "__context__",
+        "__dict__",
+        "__init__",
+        "__notes__",
+        "__repr__",
+        "__str__",
+        "__suppress_context__",
+        "__traceback__",
+        "add_note",
+        "with_traceback",
+    ):
         with pytest.raises(TypeError, match="reserved"):
             TaggedError(**{reserved: "bad"})
 

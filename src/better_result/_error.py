@@ -36,6 +36,15 @@ class TaggedError(Exception):
             "name",
             "stack",
             "__cause__",
+            "__context__",
+            "__dict__",
+            "__init__",
+            "__notes__",
+            "__repr__",
+            "__str__",
+            "__suppress_context__",
+            "__traceback__",
+            "add_note",
             "is_",
             "match",
             "match_partial",
@@ -43,6 +52,7 @@ class TaggedError(Exception):
             "to_json",
             "to_safe_dict",
             "to_safe_json",
+            "with_traceback",
         },
     )
 

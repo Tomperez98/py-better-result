@@ -90,8 +90,14 @@ def describe_error(error: UserStoreError) -> str:
 
 
 def main() -> None:
+    expected = {
+        1: Ok(User(1, "Ada")),
+        503: Ok(User(503, "Ada (cached)")),
+        404: Err(UserNotFound(404)),
+    }
     for user_id in (1, 503, 404):
         result = load_user(user_id)
+        assert result == expected[user_id]
         result = result.inspect(lambda user: print(f"loaded {user.name}")).inspect_err(
             lambda error: print(f"load failed: {describe_error(error)}")
         )

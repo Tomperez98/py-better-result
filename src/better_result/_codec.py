@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, TypedDict, cast
 
-from ._core import Err, Ok, Result, UnwrapError
+from ._core import Err, Ok, Result, UnwrapError, is_err, is_ok
 
 
 class CodecIssue(TypedDict, total=False):
@@ -67,13 +67,17 @@ def _envelope(value: object) -> Mapping[object, object] | None:
 
 
 def _require_ok[T, E](value: Result[T, E]) -> Ok[T]:
-    assert isinstance(value, Ok), "expected an Ok Result"
-    return value
+    if is_ok(value):
+        return value
+    message = "expected an Ok Result"
+    raise TypeError(message)
 
 
 def _require_err[T, E](value: Result[T, E]) -> Err[E]:
-    assert isinstance(value, Err), "expected an Err Result"
-    return value
+    if is_err(value):
+        return value
+    message = "expected an Err Result"
+    raise TypeError(message)
 
 
 def _run_sync[T, U](schema: SyncSchema[T, U], value: T) -> U | SchemaFailure:
@@ -115,7 +119,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         self,
         result: Result[OkInput, ErrInput],
     ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
-        if isinstance(result, Ok):
+        if is_ok(result):
             encoded = _run_sync(self._serialize_ok, result.ok_value)
             if isinstance(encoded, SchemaFailure):
                 return Err(ResultSerializationError(result.ok_value, encoded.issues))
@@ -165,7 +169,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         result: Result[OkInput, ErrInput],
     ) -> SerializedResult[OkWire, ErrWire]:
         encoded = self.serialize(result)
-        if isinstance(encoded, Err):
+        if is_err(encoded):
             raise UnwrapError(encoded, "ResultCodec.serialize_unsafe failed")
         return _require_ok(encoded).ok_value
 
@@ -174,7 +178,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         value: object,
     ) -> Result[OkOutput, ErrOutput]:
         decoded = self.deserialize(value)
-        if isinstance(decoded, Err) and isinstance(
+        if is_err(decoded) and isinstance(
             decoded.err_value, ResultDeserializationError
         ):
             raise UnwrapError(decoded, "ResultCodec.deserialize_unsafe failed")
@@ -201,7 +205,7 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         self,
         result: Result[OkInput, ErrInput],
     ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
-        if isinstance(result, Ok):
+        if is_ok(result):
             encoded = await _run_async(self._serialize_ok, result.ok_value)
             if isinstance(encoded, SchemaFailure):
                 return Err(ResultSerializationError(result.ok_value, encoded.issues))
@@ -243,7 +247,7 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         result: Result[OkInput, ErrInput],
     ) -> SerializedResult[OkWire, ErrWire]:
         encoded = await self.serialize(result)
-        if isinstance(encoded, Err):
+        if is_err(encoded):
             raise UnwrapError(encoded, "AsyncResultCodec.serialize_unsafe failed")
         return _require_ok(encoded).ok_value
 
@@ -252,7 +256,7 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         value: object,
     ) -> Result[OkOutput, ErrOutput]:
         decoded = await self.deserialize(value)
-        if isinstance(decoded, Err) and isinstance(
+        if is_err(decoded) and isinstance(
             decoded.err_value, ResultDeserializationError
         ):
             raise UnwrapError(decoded, "AsyncResultCodec.deserialize_unsafe failed")

@@ -31,6 +31,12 @@ def load_user(user_id: int) -> Result[User, str]:
 def main() -> None:
     for raw_id in ("42", "not-an-id", "404"):
         result = parse_user_id(raw_id).and_then(load_user)
+        expected = {
+            "42": Ok(User("Ada")),
+            "not-an-id": Err("user id must be a number"),
+            "404": Err("user not found"),
+        }
+        assert result == expected[raw_id]
 
         # Only the callback for the active branch runs.
         greeting = result.map(lambda user: f"Hello, {user.name}!")
@@ -45,6 +51,7 @@ def main() -> None:
     fallback = Err("service unavailable").unwrap_or_else(
         lambda error: f"using cached data ({error})"
     )
+    assert fallback == "using cached data (service unavailable)"
     print(fallback)
 
 

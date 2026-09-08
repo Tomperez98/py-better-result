@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from better_result import Err, Ok, Result, collect_results
+from better_result import Err, Ok, Result, collect_results, is_err
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,20 +45,30 @@ def parse_create_user(value: object) -> Result[CreateUser, tuple[str, ...]]:
             validate_age(value.get("age")),
         )
     )
-    if isinstance(validated, Err):
+    if is_err(validated):
         return Err(validated.err_value)
-    assert isinstance(validated, Ok)
 
-    name, email, age = validated.ok_value
+    name, email, age = validated.unwrap()
     return Ok(CreateUser(name, email, age))
 
 
 def main() -> None:
-    for value in (
-        {"name": "", "email": "invalid", "age": 16},
-        {"name": "Ada", "email": "ada@example.com", "age": 36},
-    ):
-        print(parse_create_user(value))
+    cases = (
+        (
+            {"name": "", "email": "invalid", "age": 16},
+            Err(
+                ("name is required", "email must contain @", "age must be at least 18")
+            ),
+        ),
+        (
+            {"name": "Ada", "email": "ada@example.com", "age": 36},
+            Ok(CreateUser("Ada", "ada@example.com", 36)),
+        ),
+    )
+    for value, expected in cases:
+        result = parse_create_user(value)
+        assert result == expected
+        print(result)
 
 
 if __name__ == "__main__":

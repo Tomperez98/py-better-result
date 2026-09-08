@@ -31,10 +31,13 @@ async def main() -> None:
     await asyncio.sleep(0.01)
     token.cancel()
 
+    cancelled = False
     try:
         await task
     except asyncio.CancelledError:
+        cancelled = True
         print("CPU work cancelled at a chunk boundary")
+    assert cancelled
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ async def main() -> None:
         fetch_user,
         max_concurrency=2,
     )
+    assert result == Err("user 404 not found")
     print(result)
 
 

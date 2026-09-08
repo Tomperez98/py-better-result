@@ -20,10 +20,13 @@ async def main() -> None:
     await operation_started.wait()
 
     token.cancel()
+    operation_cancelled = False
     try:
         await task
     except asyncio.CancelledError:
+        operation_cancelled = True
         print("operation cancelled")
+    assert operation_cancelled
 
     retry_token = CancellationToken()
 
@@ -44,8 +47,12 @@ async def main() -> None:
         )
     except asyncio.CancelledError:
         print("retry wait cancelled")
+        retry_cancelled = True
+    else:
+        retry_cancelled = False
     finally:
         await cancellation_task
+    assert retry_cancelled
 
 
 if __name__ == "__main__":

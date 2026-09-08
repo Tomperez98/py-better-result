@@ -18,8 +18,14 @@ def validate_port(port: int) -> Result[int, str]:
 
 
 def main() -> None:
+    expected = {
+        "8080": Ok(8080),
+        "not-a-port": Err("invalid literal for int() with base 10: 'not-a-port'"),
+        "70000": Err("port must be between 1 and 65535"),
+    }
     for raw_port in ("8080", "not-a-port", "70000"):
         result = parse_port(raw_port)
+        assert result == expected[raw_port]
         print(f"{raw_port!r} -> {result}")
 
 

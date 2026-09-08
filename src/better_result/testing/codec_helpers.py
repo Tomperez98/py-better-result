@@ -8,6 +8,7 @@ from better_result import (
     Result,
     ResultCodec,
     SerializedResult,
+    is_ok,
 )
 
 
@@ -35,7 +36,7 @@ def assert_codec_roundtrip[
     """Assert encoding and decoding preserve a Result branch and payload."""
     encoded = result_codec.serialize(source)
     assert encoded == Ok(expected_wire)
-    assert isinstance(encoded, Ok)
+    assert is_ok(encoded)
     assert result_codec.deserialize(encoded.ok_value) == expected_result
 
 
@@ -63,5 +64,5 @@ async def assert_async_codec_roundtrip[
     """Assert the asynchronous codec's equivalent roundtrip invariant."""
     encoded = await result_codec.serialize(source)
     assert encoded == Ok(expected_wire)
-    assert isinstance(encoded, Ok)
+    assert is_ok(encoded)
     assert await result_codec.deserialize(encoded.ok_value) == expected_result

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, NoReturn, cast, overload
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
 
-from ._core import Err, Ok, Result
+from ._core import Err, Ok, Result, is_err, is_ok
 
 
 class CancellationToken:
@@ -498,9 +498,12 @@ def flatten_result[T, E, F](
     result: Result[Result[T, E], F],
 ) -> Result[T, E | F]:
     """Flatten a nested Result while preserving either error value."""
-    if isinstance(result, Ok):
+    if is_ok(result):
         return result.ok_value
-    return cast("Result[T, E | F]", result)
+    if is_err(result):
+        return result
+    message = "expected a concrete Result variant"
+    raise TypeError(message)
 
 
 @overload
@@ -533,11 +536,10 @@ def all_results[T, E](results: Iterable[Result[T, E]]) -> Result[tuple[T, ...], 
     """Collect all success values, or return the first error in input order."""
     values: list[T] = []
     for result in results:
-        if isinstance(result, Ok):
+        if is_ok(result):
             values.append(result.ok_value)
             continue
-        assert isinstance(result, Err)
-        return Err(result.err_value)
+        return Err(result.unwrap_err())
     return Ok(tuple(values))
 
 
@@ -578,11 +580,10 @@ def partition_results[T, E](
     values: list[T] = []
     errors: list[E] = []
     for result in results:
-        if isinstance(result, Ok):
+        if is_ok(result):
             values.append(result.ok_value)
         else:
-            assert isinstance(result, Err)
-            errors.append(result.err_value)
+            errors.append(result.unwrap_err())
     return values, errors
 
 
@@ -847,11 +848,10 @@ def collect_results[T, E](
     values: list[T] = []
     errors: list[E] = []
     for result in results:
-        if isinstance(result, Ok):
+        if is_ok(result):
             values.append(result.ok_value)
         else:
-            assert isinstance(result, Err)
-            errors.append(result.err_value)
+            errors.append(result.unwrap_err())
     if errors:
         return Err(tuple(errors))
     return Ok(tuple(values))
@@ -931,11 +931,10 @@ def traverse[A, T, E](
     values_out: list[T] = []
     for value in values:
         result = operation(value)
-        if isinstance(result, Ok):
+        if is_ok(result):
             values_out.append(result.ok_value)
             continue
-        assert isinstance(result, Err)
-        return Err(result.err_value)
+        return Err(result.unwrap_err())
     return Ok(tuple(values_out))
 
 

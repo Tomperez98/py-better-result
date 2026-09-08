@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import assert_never
 
-from better_result import Err, Ok, Result
+from better_result import Err, Ok, Result, is_err, is_ok
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,13 +94,15 @@ def register_user(value: object) -> Result[User, RegisterUserError]:
 
 def to_http_response(result: Result[User, RegisterUserError]) -> HttpResponse:
     """Map the domain error union to an HTTP response once at the edge."""
-    if isinstance(result, Ok):
+    if is_ok(result):
         return HttpResponse(status=201, body={"id": result.ok_value.user_id})
-    if not isinstance(result, Err):
+
+    if is_err(result):
+        error = result.err_value
+    else:
         message = "expected a concrete Result variant"
         raise TypeError(message)
 
-    error = result.err_value
     match error:
         case InvalidCreateUser():
             return HttpResponse(status=400, body={"message": "invalid user"})
@@ -123,6 +125,14 @@ def main() -> None:
         ({"email": "publish-fails@example.com"}, "publish fails"),
     ]:
         response = to_http_response(register_user(raw_input))
+        expected_status = {
+            "success": 201,
+            "invalid input": 400,
+            "email taken": 409,
+            "store down": 503,
+            "publish fails": 503,
+        }
+        assert response.status == expected_status[label]
         print(f"{label}: status={response.status}")
 
 

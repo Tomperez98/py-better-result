@@ -13,6 +13,7 @@ from better_result import (
     async_codec,
     capture_async,
     collect_results_async,
+    is_ok,
     partition_results_async,
 )
 
@@ -70,6 +71,8 @@ async def main() -> None:
             fetch_score_result("20"),
         )
     )
+    expected_error = "score error: invalid literal for int() with base 10: 'bad'"
+    assert results == Err((expected_error,))
     print(f"collected: {results}")
 
     values, errors = await partition_results_async(
@@ -79,6 +82,8 @@ async def main() -> None:
             fetch_score_result("20"),
         )
     )
+    assert values == [10, 20]
+    assert errors == [expected_error]
     print(f"partitioned: values={values}, errors={errors}")
 
     result_codec = async_codec(
@@ -88,9 +93,12 @@ async def main() -> None:
         deserialize_err=deserialize_error,
     )
     encoded = await result_codec.serialize(Ok(42))
+    assert is_ok(encoded)
+    assert encoded == Ok({"status": "ok", "value": {"score": 42}})
     print(f"encoded: {encoded}")
-    if isinstance(encoded, Ok):
-        print(f"decoded: {await result_codec.deserialize(encoded.ok_value)}")
+    decoded = await result_codec.deserialize(encoded.ok_value)
+    assert decoded == Ok(42)
+    print(f"decoded: {decoded}")
 
     # A wire-level error remains a domain Err after decoding.
     decoded_error = await result_codec.deserialize(

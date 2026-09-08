@@ -22,10 +22,6 @@ def test_variants_have_symmetric_shape_and_value_access() -> None:
     assert success == Ok(3)
     assert failure == Err("bad")
     assert success != failure
-    assert success.is_ok() is True
-    assert success.is_err() is False
-    assert failure.is_ok() is False
-    assert failure.is_err() is True
     assert success.ok() == 3
     assert success.err() is None
     assert failure.ok() is None

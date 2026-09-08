@@ -8,7 +8,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Final,
-    Literal,
     Never,
     NoReturn,
     TypeVar,
@@ -34,12 +33,6 @@ class Result[T, E](ABC):
     ``T`` and ``E`` context when a callback is passed to a Result workflow.
     ``Ok`` and ``Err`` remain the concrete runtime variants.
     """
-
-    @abstractmethod
-    def is_ok(self) -> bool: ...
-
-    @abstractmethod
-    def is_err(self) -> bool: ...
 
     @abstractmethod
     def ok(self) -> T | None: ...
@@ -140,14 +133,6 @@ class Ok[T](Result[T, Never]):
     __hash__ = None
 
     value: T
-
-    @override
-    def is_ok(self) -> Literal[True]:
-        return True
-
-    @override
-    def is_err(self) -> Literal[False]:
-        return False
 
     @override
     def ok(self) -> T:
@@ -280,14 +265,6 @@ class Err[E](Result[Never, E]):
     __hash__ = None
 
     value: E
-
-    @override
-    def is_ok(self) -> Literal[False]:
-        return False
-
-    @override
-    def is_err(self) -> Literal[True]:
-        return True
 
     @override
     def ok(self) -> None:
@@ -446,8 +423,8 @@ def _require_result(value: object) -> Result[object, object]:
 
 
 def is_ok[T, E](result: Result[T, E]) -> TypeIs[Ok[T]]:
-    return result.is_ok()
+    return isinstance(result, Ok)
 
 
 def is_err[T, E](result: Result[T, E]) -> TypeIs[Err[E]]:
-    return result.is_err()
+    return isinstance(result, Err)

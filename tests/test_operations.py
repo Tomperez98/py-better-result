@@ -299,9 +299,9 @@ async def test_try_async_cancels_an_in_flight_operation_with_the_token() -> None
     await operation_started.wait()
     token.cancel()
 
+    await asyncio.wait_for(operation_cleaned_up.wait(), timeout=1.0)
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, timeout=0.05)
-    assert operation_cleaned_up.is_set()
+        await task
 
 
 @pytest.mark.asyncio

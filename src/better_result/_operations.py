@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
+from dataclasses import dataclass
 import inspect
 import math
 import random
 import time
-from contextlib import suppress
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn, cast, overload
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
 
-from ._core import Err, Ok, Result, is_err, is_ok
+from better_result._core import Err, Ok, Result, is_err, is_ok
 
 
 class CancellationToken:

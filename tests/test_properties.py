@@ -6,8 +6,8 @@ import asyncio
 import math
 from typing import TYPE_CHECKING
 
-import pytest
 from hypothesis import given, settings, strategies as st
+import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -1,275 +1,442 @@
-"""Internal implementation of the narrow Result API."""
+"""Core success and failure variants for the fresh Result API."""
 
 from __future__ import annotations
 
-import asyncio
-import traceback
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Generic, Literal, Never, TypeVar, cast, override
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Final,
+    Literal,
+    Never,
+    NoReturn,
+    TypeVar,
+    cast,
+    override,
+)
+
+from typing_extensions import TypeIs
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-E_co = TypeVar("E_co", covariant=True)
-E2 = TypeVar("E2")
-T_co = TypeVar("T_co", covariant=True)
 U = TypeVar("U")
+F = TypeVar("F")
+TBE = TypeVar("TBE", bound=BaseException)
 
 
-class PanicError(BaseException):
-    """An unrecoverable programmer or invariant failure."""
+class Result[T, E](ABC):
+    """
+    Abstract common interface for successful and failed Results.
 
-    _tag: Literal["Panic"] = "Panic"
-    name: Literal["Panic"] = "Panic"
+    Keeping the operations on a generic common base gives type checkers one
+    ``T`` and ``E`` context when a callback is passed to a Result workflow.
+    ``Ok`` and ``Err`` remain the concrete runtime variants.
+    """
 
-    def __init__(self, message: str, cause: object | None = None) -> None:
-        super().__init__(message)
-        self.message = message
-        self.cause = cause
-        if isinstance(cause, BaseException):
-            self.__cause__ = cause
-        self.stack = "".join(traceback.format_stack()[:-1])
+    @abstractmethod
+    def is_ok(self) -> bool: ...
 
-    def to_dict(self) -> dict[str, object | None]:
-        """Return diagnostic metadata as Python values."""
-        return {
-            "_tag": self._tag,
-            "name": self.name,
-            "message": self.message,
-            "cause": _serialize_cause(self.cause),
-            "stack": self.stack,
-        }
+    @abstractmethod
+    def is_err(self) -> bool: ...
 
-    def to_json(self) -> dict[str, object | None]:
-        """Return recursively JSON-compatible diagnostic metadata."""
-        return cast("dict[str, object | None]", _json_safe(self.to_dict()))
+    @abstractmethod
+    def ok(self) -> T | None: ...
 
-    def to_safe_dict(self) -> dict[str, object | None]:
-        """Return diagnostic metadata without stack traces."""
-        return cast(
-            "dict[str, object | None]",
-            _without_diagnostic_stack(self.to_dict()),
+    @abstractmethod
+    def err(self) -> E | None: ...
+
+    @abstractmethod
+    def expect(self, message: str) -> T: ...
+
+    @abstractmethod
+    def expect_err(self, message: str) -> E: ...
+
+    @abstractmethod
+    def unwrap(self) -> T: ...
+
+    @abstractmethod
+    def unwrap_err(self) -> E: ...
+
+    @abstractmethod
+    def unwrap_or(self, default: U) -> T | U: ...
+
+    @abstractmethod
+    def unwrap_or_else(self, op: Callable[[E], U]) -> T | U: ...
+
+    @abstractmethod
+    def unwrap_or_raise(self, error: type[TBE]) -> T: ...
+
+    @abstractmethod
+    def map(self, op: Callable[[T], U]) -> Result[U, E]: ...
+
+    @abstractmethod
+    async def map_async(self, op: Callable[[T], Awaitable[U]]) -> Result[U, E]: ...
+
+    @abstractmethod
+    def map_or(self, default: U, op: Callable[[T], U]) -> U: ...
+
+    @abstractmethod
+    def map_or_else(self, default_op: Callable[[], U], op: Callable[[T], U]) -> U: ...
+
+    @abstractmethod
+    def map_err(self, op: Callable[[E], F]) -> Result[T, F]: ...
+
+    @abstractmethod
+    def and_then[U, F](self, op: Callable[[T], Result[U, F]]) -> Result[U, E | F]: ...
+
+    @abstractmethod
+    async def and_then_async[U, F](
+        self, op: Callable[[T], Awaitable[Result[U, F]]]
+    ) -> Result[U, E | F]: ...
+
+    @abstractmethod
+    def or_else[U, F](self, op: Callable[[E], Result[U, F]]) -> Result[T | U, F]: ...
+
+    @abstractmethod
+    async def or_else_async[U, F](
+        self, op: Callable[[E], Awaitable[Result[U, F]]]
+    ) -> Result[T | U, F]: ...
+
+    @abstractmethod
+    def match[U](self, ok: Callable[[T], U], err: Callable[[E], U]) -> U: ...
+
+    @abstractmethod
+    def inspect(self, op: Callable[[T], Any]) -> Result[T, E]: ...
+
+    @abstractmethod
+    async def inspect_async(
+        self, op: Callable[[T], Awaitable[Any]]
+    ) -> Result[T, E]: ...
+
+    @abstractmethod
+    def inspect_err(self, op: Callable[[E], Any]) -> Result[T, E]: ...
+
+    @abstractmethod
+    async def inspect_err_async(
+        self, op: Callable[[E], Awaitable[Any]]
+    ) -> Result[T, E]: ...
+
+    @abstractmethod
+    def inspect_both(
+        self, ok: Callable[[T], Any], err: Callable[[E], Any]
+    ) -> Result[T, E]: ...
+
+    @abstractmethod
+    async def inspect_both_async(
+        self,
+        ok: Callable[[T], Awaitable[Any]],
+        err: Callable[[E], Awaitable[Any]],
+    ) -> Result[T, E]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class Ok[T](Result[T, Never]):
+    __match_args__ = ("ok_value",)
+    __hash__ = None
+
+    value: T
+
+    @override
+    def is_ok(self) -> Literal[True]:
+        return True
+
+    @override
+    def is_err(self) -> Literal[False]:
+        return False
+
+    @override
+    def ok(self) -> T:
+        return self.value
+
+    @override
+    def err(self) -> None:
+        return None
+
+    @property
+    def ok_value(self) -> T:
+        return self.value
+
+    @override
+    def expect(self, message: str) -> T:
+        return self.value
+
+    @override
+    def expect_err(self, message: str) -> NoReturn:
+        raise UnwrapError(self, message)
+
+    @override
+    def unwrap(self) -> T:
+        return self.value
+
+    @override
+    def unwrap_err(self) -> NoReturn:
+        raise UnwrapError(self, "Called `Result.unwrap_err()` on an `Ok` value")
+
+    @override
+    def unwrap_or(self, default: U) -> T:
+        return self.value
+
+    @override
+    def unwrap_or_else(self, op: Callable[[Never], U]) -> T:
+        return self.value
+
+    @override
+    def unwrap_or_raise(self, error: type[TBE]) -> T:
+        return self.value
+
+    @override
+    def map(self, op: Callable[[T], U]) -> Ok[U]:
+        return Ok(op(self.value))
+
+    @override
+    async def map_async(self, op: Callable[[T], Awaitable[U]]) -> Ok[U]:
+        return Ok(await op(self.value))
+
+    @override
+    def map_or(self, default: U, op: Callable[[T], U]) -> U:
+        return op(self.value)
+
+    @override
+    def map_or_else(self, default_op: Callable[[], U], op: Callable[[T], U]) -> U:
+        return op(self.value)
+
+    @override
+    def map_err(self, op: Callable[[Never], F]) -> Ok[T]:
+        return self
+
+    @override
+    def and_then[U, E](self, op: Callable[[T], Result[U, E]]) -> Result[U, E]:
+        result = op(self.value)
+        return cast("Result[U, E]", _require_result(result))
+
+    @override
+    async def and_then_async[U, E](
+        self, op: Callable[[T], Awaitable[Result[U, E]]]
+    ) -> Result[U, E]:
+        result = await op(self.value)
+        return cast("Result[U, E]", _require_result(result))
+
+    @override
+    def or_else[U, F](self, op: Callable[[Never], Result[U, F]]) -> Ok[T]:
+        return self
+
+    @override
+    async def or_else_async[U, F](
+        self, op: Callable[[Never], Awaitable[Result[U, F]]]
+    ) -> Ok[T]:
+        return self
+
+    @override
+    def match[U](self, ok: Callable[[T], U], err: Callable[[Never], U]) -> U:
+        return ok(self.value)
+
+    @override
+    def inspect(self, op: Callable[[T], Any]) -> Ok[T]:
+        op(self.value)
+        return self
+
+    @override
+    async def inspect_async(self, op: Callable[[T], Awaitable[Any]]) -> Ok[T]:
+        await op(self.value)
+        return self
+
+    @override
+    def inspect_err(self, op: Callable[[Never], Any]) -> Ok[T]:
+        return self
+
+    @override
+    async def inspect_err_async(self, op: Callable[[Never], Awaitable[Any]]) -> Ok[T]:
+        return self
+
+    @override
+    def inspect_both(
+        self, ok: Callable[[T], Any], err: Callable[[Never], Any]
+    ) -> Ok[T]:
+        ok(self.value)
+        return self
+
+    @override
+    async def inspect_both_async(
+        self,
+        ok: Callable[[T], Awaitable[Any]],
+        err: Callable[[Never], Awaitable[Any]],
+    ) -> Ok[T]:
+        await ok(self.value)
+        return self
+
+
+@dataclass(frozen=True, slots=True)
+class Err[E](Result[Never, E]):
+    __match_args__ = ("err_value",)
+    __hash__ = None
+
+    value: E
+
+    @override
+    def is_ok(self) -> Literal[False]:
+        return False
+
+    @override
+    def is_err(self) -> Literal[True]:
+        return True
+
+    @override
+    def ok(self) -> None:
+        return None
+
+    @override
+    def err(self) -> E:
+        return self.value
+
+    @property
+    def err_value(self) -> E:
+        return self.value
+
+    @override
+    def expect(self, message: str) -> NoReturn:
+        exc = UnwrapError(self, f"{message}: {self.value!r}")
+        if isinstance(self.value, BaseException):
+            raise exc from self.value
+        raise exc
+
+    @override
+    def expect_err(self, message: str) -> E:
+        return self.value
+
+    @override
+    def unwrap(self) -> NoReturn:
+        exc = UnwrapError(
+            self,
+            f"Called `Result.unwrap()` on an `Err` value: {self.value!r}",
         )
+        if isinstance(self.value, BaseException):
+            raise exc from self.value
+        raise exc
 
-    def to_safe_json(self) -> dict[str, object | None]:
-        """Return a JSON-compatible transport payload."""
-        return cast("dict[str, object | None]", _json_safe(self.to_safe_dict()))
+    @override
+    def unwrap_err(self) -> E:
+        return self.value
+
+    @override
+    def unwrap_or(self, default: U) -> U:
+        return default
+
+    @override
+    def unwrap_or_else[T](self, op: Callable[[E], T]) -> T:
+        return op(self.value)
+
+    @override
+    def unwrap_or_raise(self, error: type[TBE]) -> NoReturn:
+        raise error(self.value)
+
+    @override
+    def map(self, op: Callable[[Never], U]) -> Err[E]:
+        return self
+
+    @override
+    async def map_async(self, op: Callable[[Never], Awaitable[U]]) -> Err[E]:
+        return self
+
+    @override
+    def map_or(self, default: U, op: Callable[[Never], U]) -> U:
+        return default
+
+    @override
+    def map_or_else(self, default_op: Callable[[], U], op: Callable[[Never], U]) -> U:
+        return default_op()
+
+    @override
+    def map_err(self, op: Callable[[E], F]) -> Err[F]:
+        return Err(op(self.value))
+
+    @override
+    def and_then[U, F](self, op: Callable[[Never], Result[U, F]]) -> Err[E]:
+        return self
+
+    @override
+    async def and_then_async[U, F](
+        self, op: Callable[[Never], Awaitable[Result[U, F]]]
+    ) -> Err[E]:
+        return self
+
+    @override
+    def or_else[T, F](self, op: Callable[[E], Result[T, F]]) -> Result[T, F]:
+        return op(self.value)
+
+    @override
+    async def or_else_async[T, F](
+        self, op: Callable[[E], Awaitable[Result[T, F]]]
+    ) -> Result[T, F]:
+        return await op(self.value)
+
+    @override
+    def match[U](self, ok: Callable[[Never], U], err: Callable[[E], U]) -> U:
+        return err(self.value)
+
+    @override
+    def inspect(self, op: Callable[[Never], Any]) -> Err[E]:
+        return self
+
+    @override
+    async def inspect_async(self, op: Callable[[Never], Awaitable[Any]]) -> Err[E]:
+        return self
+
+    @override
+    def inspect_err(self, op: Callable[[E], Any]) -> Err[E]:
+        op(self.value)
+        return self
+
+    @override
+    async def inspect_err_async(self, op: Callable[[E], Awaitable[Any]]) -> Err[E]:
+        await op(self.value)
+        return self
+
+    @override
+    def inspect_both(
+        self, ok: Callable[[Never], Any], err: Callable[[E], Any]
+    ) -> Err[E]:
+        err(self.value)
+        return self
+
+    @override
+    async def inspect_both_async(
+        self,
+        ok: Callable[[Never], Awaitable[Any]],
+        err: Callable[[E], Awaitable[Any]],
+    ) -> Err[E]:
+        await err(self.value)
+        return self
 
 
-def _serialize_cause(cause: object | None) -> object | None:
-    if isinstance(cause, BaseException):
-        return {
-            "name": type(cause).__name__,
-            "message": str(cause),
-            "stack": "".join(
-                traceback.format_exception(type(cause), cause, cause.__traceback__),
-            ),
-        }
-    return cause
+OkErr: Final = (Ok, Err)
 
 
-def _without_diagnostic_stack(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {
-            key: _without_diagnostic_stack(item)
-            for key, item in value.items()
-            if key != "stack"
-        }
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [_without_diagnostic_stack(item) for item in value]
+class UnwrapError(BaseException):
+    """Raised when an unwrap or expect operation selects the wrong variant."""
+
+    _result: Result[Any, Any]
+
+    def __init__(self, result: Result[Any, Any], message: str) -> None:
+        self._result = result
+        super().__init__(message)
+
+    @property
+    def result(self) -> Result[Any, Any]:
+        return self._result
+
+
+def _require_result(value: object) -> Result[object, object]:
+    if not isinstance(value, OkErr):
+        message = "and_then callback must return a Result"
+        raise TypeError(message)
     return value
 
 
-def _json_safe(value: object, seen: set[int] | None = None) -> object:
-    """Convert arbitrary values into JSON-compatible primitives."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, BaseException):
-        return _json_safe(_serialize_cause(value), seen)
-
-    active = seen if seen is not None else set()
-    identity = id(value)
-    if identity in active:
-        return "<cycle>"
-
-    if isinstance(value, Mapping):
-        active.add(identity)
-        try:
-            return {str(key): _json_safe(item, active) for key, item in value.items()}
-        finally:
-            active.remove(identity)
-    if isinstance(value, (list, tuple, set, frozenset)):
-        active.add(identity)
-        try:
-            return [_json_safe(item, active) for item in value]
-        finally:
-            active.remove(identity)
-    return repr(value)
+def is_ok[T, E](result: Result[T, E]) -> TypeIs[Ok[T]]:
+    return result.is_ok()
 
 
-def panic(message: str, cause: object | None = None) -> Never:
-    """Raise an internal unrecoverable failure."""
-    raise PanicError(message, cause)
-
-
-def _try_or_panic[C](fn: Callable[[], C], message: str) -> C:
-    try:
-        return fn()
-    except PanicError:
-        raise
-    except Exception as cause:
-        raise PanicError(message, cause) from cause
-
-
-async def _try_or_panic_async[C](fn: Callable[[], Awaitable[C]], message: str) -> C:
-    try:
-        return await fn()
-    except asyncio.CancelledError:
-        raise
-    except PanicError:
-        raise
-    except Exception as cause:
-        raise PanicError(message, cause) from cause
-
-
-class Ok(Generic[T_co]):  # noqa: UP046
-    """Successful Result variant."""
-
-    __slots__ = ("value",)
-    __hash__ = None
-    value: T_co
-
-    def __init__(self, value: T_co) -> None:
-        object.__setattr__(self, "value", value)
-
-    @override
-    def __setattr__(self, _name: str, _value: object) -> Never:
-        message = "Ok is immutable"
-        raise AttributeError(message)
-
-    @override
-    def __repr__(self) -> str:
-        return f"Ok({self.value!r})"
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, Ok)
-            and type(self) is type(other)
-            and self.value == other.value
-        )
-
-    def map(self, fn: Callable[[T_co], U]) -> Ok[U]:
-        """Transform the success value."""
-        return _try_or_panic(lambda: Ok(fn(self.value)), "map callback threw")
-
-    def map_error(self, _fn: Callable[[Never], E2]) -> Ok[T_co]:
-        """Leave a successful result unchanged."""
-        return self
-
-    def and_then(self, fn: Callable[[T_co], Result[U, E2]]) -> Result[U, E2]:
-        """Sequence a Result-returning operation."""
-
-        def callback() -> Result[U, E2]:
-            return cast(
-                "Result[U, E2]",
-                _require_result(
-                    fn(self.value), "and_then callback must return a Result"
-                ),
-            )
-
-        return _try_or_panic(callback, "and_then callback threw")
-
-    async def and_then_async(
-        self,
-        fn: Callable[[T_co], Awaitable[Result[U, E2]]],
-    ) -> Result[U, E2]:
-        """Async version of :meth:`and_then`."""
-
-        async def callback() -> Result[U, E2]:
-            return cast(
-                "Result[U, E2]",
-                _require_result(
-                    await fn(self.value),
-                    "and_then_async callback must return a Result",
-                ),
-            )
-
-        return await _try_or_panic_async(callback, "and_then_async callback threw")
-
-    def match(self, on_ok: Callable[[T_co], U], on_err: Callable[[Never], U]) -> U:
-        """Consume the successful branch with explicit branch callbacks."""
-        if not callable(on_ok) or not callable(on_err):
-            panic("match callbacks must be callable")
-        return _try_or_panic(lambda: on_ok(self.value), "match ok handler threw")
-
-    def unwrap_or(self, _fallback: U) -> T_co:
-        """Return the success value."""
-        return self.value
-
-
-class Err(Generic[E_co]):  # noqa: UP046
-    """Failed Result variant."""
-
-    __slots__ = ("error",)
-    __hash__ = None
-    error: E_co
-
-    def __init__(self, error: E_co) -> None:
-        object.__setattr__(self, "error", error)
-
-    @override
-    def __setattr__(self, _name: str, _value: object) -> Never:
-        message = "Err is immutable"
-        raise AttributeError(message)
-
-    @override
-    def __repr__(self) -> str:
-        return f"Err({self.error!r})"
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, Err)
-            and type(self) is type(other)
-            and self.error == other.error
-        )
-
-    def map(self, _fn: Callable[[Never], U]) -> Err[E_co]:
-        """Leave a failed result unchanged."""
-        return self
-
-    def map_error(self, fn: Callable[[E_co], E2]) -> Err[E2]:
-        """Transform the failure value."""
-        return _try_or_panic(lambda: Err(fn(self.error)), "map_error callback threw")
-
-    def and_then(self, _fn: Callable[[Never], Result[U, E2]]) -> Err[E_co]:
-        """Leave a failed result unchanged."""
-        return self
-
-    async def and_then_async(
-        self,
-        _fn: Callable[[Never], Awaitable[Result[U, E2]]],
-    ) -> Err[E_co]:
-        """Async no-op for a failed result."""
-        return self
-
-    def match(self, on_ok: Callable[[Never], U], on_err: Callable[[E_co], U]) -> U:
-        """Consume the failed branch with explicit branch callbacks."""
-        if not callable(on_ok) or not callable(on_err):
-            panic("match callbacks must be callable")
-        return _try_or_panic(lambda: on_err(self.error), "match err handler threw")
-
-    def unwrap_or(self, fallback: U) -> U:
-        """Return the fallback value."""
-        return fallback
-
-
-type Result[A, E] = Ok[A] | Err[E]
-
-
-def _require_result(value: object, message: str) -> Result[object, object]:
-    """Fail fast when a callback violates the Result return contract."""
-    if not isinstance(value, (Ok, Err)):
-        raise PanicError(message, value)
-    return cast("Result[object, object]", value)
+def is_err[T, E](result: Result[T, E]) -> TypeIs[Err[E]]:
+    return result.is_err()

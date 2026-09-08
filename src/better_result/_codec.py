@@ -1,76 +1,43 @@
-"""
-Validated Result codecs for serialization boundaries.
-
-A codec combines four schemas: success and error payloads in each direction.
-Schemas may be synchronous or asynchronous. A schema should return a payload
-or :class:`SchemaFailure`; throwing from validation is a defect and becomes
-``Panic``.
-"""
+"""Small, typed codecs for crossing a Result serialization boundary."""
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol, TypedDict, cast
+from typing import Literal, TypedDict, cast
 
-from better_result._core import Err, Ok, PanicError, Result, panic
-from better_result._error import (
-    ResultCodecIssue,
-    ResultDeserializationError,
-    ResultSerializationError,
-)
+from ._core import Err, Ok, Result, UnwrapError
+
+
+class CodecIssue(TypedDict, total=False):
+    """A structured validation issue returned by a schema."""
+
+    message: str
+    path: Sequence[str | int]
 
 
 @dataclass(frozen=True, slots=True)
 class SchemaFailure:
-    """Validation issues returned by a schema instead of raised."""
+    """Expected validation failure returned by a schema."""
 
-    issues: Sequence[ResultCodecIssue]
-
-
-class SyncSchema[T, U](Protocol):
-    """A synchronous object validator for a Result boundary."""
-
-    def validate(self, value: T) -> U | SchemaFailure: ...
+    issues: Sequence[CodecIssue]
 
 
-class AsyncSchema[T, U](Protocol):
-    """A synchronous or asynchronous object validator."""
+@dataclass(frozen=True, slots=True)
+class ResultSerializationError:
+    """A Result payload was rejected while being encoded."""
 
-    def validate(
-        self, value: T
-    ) -> U | SchemaFailure | Awaitable[U | SchemaFailure]: ...
-
-
-type SyncSchemaLike[T, U] = SyncSchema[T, U] | Callable[[T], U | SchemaFailure]
-type SchemaLike[T, U] = (
-    AsyncSchema[T, U] | Callable[[T], U | SchemaFailure | Awaitable[U | SchemaFailure]]
-)
+    value: object
+    issues: Sequence[CodecIssue]
 
 
-class SerializeSchemas[OkInput, ErrInput, OkWire, ErrWire](TypedDict):
-    """The two schemas used to encode Result payloads."""
+@dataclass(frozen=True, slots=True)
+class ResultDeserializationError:
+    """An envelope or payload was rejected while being decoded."""
 
-    ok: SchemaLike[OkInput, OkWire]
-    err: SchemaLike[ErrInput, ErrWire]
-
-
-class DeserializeSchemas[OkWire, ErrWire, OkOutput, ErrOutput](TypedDict):
-    """The two schemas used to decode Result payloads."""
-
-    ok: SchemaLike[OkWire, OkOutput]
-    err: SchemaLike[ErrWire, ErrOutput]
-
-
-class ResultCodecConfig[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
-    TypedDict,
-):
-    """Four named schemas defining a Result boundary."""
-
-    serialize: SerializeSchemas[OkInput, ErrInput, OkWire, ErrWire]
-    deserialize: DeserializeSchemas[OkWire, ErrWire, OkOutput, ErrOutput]
+    value: object
+    issues: Sequence[CodecIssue] | None = None
 
 
 class SerializedOk[T](TypedDict):
@@ -86,320 +53,303 @@ class SerializedErr[E](TypedDict):
 type SerializedResult[T, E] = SerializedOk[T] | SerializedErr[E]
 
 
-def _validate[T, U](
-    schema: SchemaLike[T, U],
+type SyncSchema[T, U] = Callable[[T], U | SchemaFailure]
+type AsyncSchema[T, U] = Callable[[T], Awaitable[U | SchemaFailure]]
+
+
+def _envelope(value: object) -> Mapping[object, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    status = value.get("status")
+    if status not in ("ok", "error"):
+        return None
+    return cast("Mapping[object, object]", value)
+
+
+def _require_ok[T, E](value: Result[T, E]) -> Ok[T]:
+    assert isinstance(value, Ok), "expected an Ok Result"
+    return value
+
+
+def _require_err[T, E](value: Result[T, E]) -> Err[E]:
+    assert isinstance(value, Err), "expected an Err Result"
+    return value
+
+
+def _finish[T, E](
+    value: T | SchemaFailure,
+    original: object,
+    make_error: Callable[[object, Sequence[CodecIssue]], E],
+) -> Result[T, E]:
+    if isinstance(value, SchemaFailure):
+        return Err(make_error(original, value.issues))
+    return Ok(value)
+
+
+def _run_sync[T, U, E](
+    schema: SyncSchema[T, U],
     value: T,
-) -> U | SchemaFailure | Awaitable[U | SchemaFailure]:
-    if callable(schema):
-        callback = cast(
-            "Callable[[T], U | SchemaFailure | Awaitable[U | SchemaFailure]]",
-            schema,
-        )
-        return callback(value)
-    return schema.validate(value)
-
-
-def _finish_validation[T, U, E](
-    validation: U | SchemaFailure,
-    original: T,
-    make_error: Callable[[T, Sequence[ResultCodecIssue]], E],
+    original: object,
+    make_error: Callable[[object, Sequence[CodecIssue]], E],
 ) -> Result[U, E]:
-    if isinstance(validation, SchemaFailure):
-        return Err(make_error(original, validation.issues))
-    return Ok(validation)
+    validated = schema(value)
+    if inspect.isawaitable(validated):
+        # A sync codec should fail at the call site, and close a coroutine so
+        # callers do not get a second "never awaited" warning.
+        if inspect.iscoroutine(validated):
+            validated.close()
+        message = "sync codec schema returned an awaitable; use async_codec"
+        raise TypeError(message)
+    return cast(
+        "Result[U, E]",
+        _finish(cast("U | SchemaFailure", validated), original, make_error),
+    )
 
 
-def _run_validation[T, U, E](
-    schema: SchemaLike[T, U],
+async def _run_async[T, U, E](
+    schema: AsyncSchema[T, U],
     value: T,
-    make_error: Callable[[T, Sequence[ResultCodecIssue]], E],
-    panic_message: str,
-    *,
-    allow_async: bool = True,
-) -> Result[U, E] | Awaitable[Result[U, E]]:
-    try:
-        validation = _validate(schema, value)
-    except PanicError:
-        raise
-    except Exception as cause:
-        panic(panic_message, cause)
-
-    if not allow_async and inspect.isawaitable(validation):
-        if inspect.iscoroutine(validation):
-            validation.close()
-        panic("ResultCodec received an async schema; use async_codec")
-
-    if inspect.isawaitable(validation):
-
-        async def finish_async() -> Result[U, E]:
-            try:
-                resolved = await validation
-            except asyncio.CancelledError:
-                raise
-            except PanicError:
-                raise
-            except Exception as cause:
-                panic(panic_message, cause)
-            return cast(
-                "Result[U, E]",
-                _finish_validation(
-                    cast("U | SchemaFailure", resolved),
-                    value,
-                    make_error,
-                ),
-            )
-
-        return finish_async()
-    return _finish_validation(validation, value, make_error)
+    original: object,
+    make_error: Callable[[object, Sequence[CodecIssue]], E],
+) -> Result[U, E]:
+    validated = await schema(value)
+    return cast(
+        "Result[U, E]",
+        _finish(validated, original, make_error),
+    )
 
 
-async def _await_operation[T, E](
-    operation: T | Awaitable[T],
-) -> T:
-    if inspect.isawaitable(operation):
-        return cast("T", await operation)
-    return operation
-
-
-def _is_envelope(value: object) -> bool:
-    return isinstance(value, Mapping) and value.get("status") in {"ok", "error"}
-
-
-class _CodecBase[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
-    """Shared implementation for synchronous and asynchronous codecs."""
+class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
+    """Encode and decode Result envelopes with synchronous schemas."""
 
     def __init__(
         self,
-        config: ResultCodecConfig[
-            OkInput,
-            ErrInput,
-            OkWire,
-            ErrWire,
-            OkOutput,
-            ErrOutput,
-        ],
+        *,
+        serialize_ok: SyncSchema[OkInput, OkWire],
+        serialize_err: SyncSchema[ErrInput, ErrWire],
+        deserialize_ok: SyncSchema[OkWire, OkOutput],
+        deserialize_err: SyncSchema[ErrWire, ErrOutput],
     ) -> None:
-        self._config = config
-
-    def _serialize(
-        self,
-        result: Result[OkInput, ErrInput],
-        *,
-        allow_async: bool = True,
-    ) -> (
-        Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]
-        | Awaitable[Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]]
-    ):
-        if isinstance(result, Ok):
-            operation = _run_validation(
-                self._config["serialize"]["ok"],
-                result.value,
-                ResultSerializationError,
-                "Result.codec serialize schema threw",
-                allow_async=allow_async,
-            )
-
-            def finish_ok(
-                resolved: Result[OkWire, ResultSerializationError],
-            ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
-                if isinstance(resolved, Err):
-                    return Err(resolved.error)
-                envelope: SerializedOk[OkWire] = {
-                    "status": "ok",
-                    "value": resolved.value,
-                }
-                return Ok(
-                    envelope,
-                )
-
-            return _map_operation(operation, finish_ok)
-
-        operation = _run_validation(
-            self._config["serialize"]["err"],
-            result.error,
-            ResultSerializationError,
-            "Result.codec serialize schema threw",
-            allow_async=allow_async,
-        )
-
-        def finish_err(
-            resolved: Result[ErrWire, ResultSerializationError],
-        ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
-            if isinstance(resolved, Err):
-                return Err(
-                    resolved.error,
-                )
-            envelope: SerializedErr[ErrWire] = {
-                "status": "error",
-                "error": resolved.value,
-            }
-            return Ok(
-                envelope,
-            )
-
-        return _map_operation(operation, finish_err)
-
-    def _deserialize(
-        self,
-        value: object,
-        *,
-        allow_async: bool = True,
-    ) -> (
-        Result[OkOutput, ErrOutput | ResultDeserializationError]
-        | Awaitable[Result[OkOutput, ErrOutput | ResultDeserializationError]]
-    ):
-        if not _is_envelope(value):
-            return Err(
-                ResultDeserializationError(value),
-            )
-        assert isinstance(value, Mapping)
-        if value["status"] == "ok":
-            operation = _run_validation(
-                self._config["deserialize"]["ok"],
-                cast("OkWire", value.get("value")),
-                ResultDeserializationError,
-                "Result.codec deserialize schema threw",
-                allow_async=allow_async,
-            )
-
-            def finish_ok(
-                resolved: Result[OkOutput, ResultDeserializationError],
-            ) -> Result[OkOutput, ErrOutput | ResultDeserializationError]:
-                if isinstance(resolved, Err):
-                    return Err(
-                        resolved.error,
-                    )
-                return Ok(
-                    resolved.value,
-                )
-
-            return _map_operation(operation, finish_ok)
-
-        operation = _run_validation(
-            self._config["deserialize"]["err"],
-            cast("ErrWire", value.get("error")),
-            ResultDeserializationError,
-            "Result.codec deserialize schema threw",
-            allow_async=allow_async,
-        )
-
-        def finish_err(
-            resolved: Result[ErrOutput, ResultDeserializationError],
-        ) -> Result[OkOutput, ErrOutput | ResultDeserializationError]:
-            if isinstance(resolved, Err):
-                return Err(
-                    resolved.error,
-                )
-            return Err(resolved.value)
-
-        return _map_operation(operation, finish_err)
-
-
-class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
-    _CodecBase[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput],
-):
-    """Encode and decode Result envelopes with synchronous schemas."""
+        self._serialize_ok = serialize_ok
+        self._serialize_err = serialize_err
+        self._deserialize_ok = deserialize_ok
+        self._deserialize_err = deserialize_err
 
     def serialize(
         self,
         result: Result[OkInput, ErrInput],
     ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
-        return cast(
-            "Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]",
-            self._serialize(result, allow_async=False),
+        if isinstance(result, Ok):
+            encoded = _run_sync(
+                self._serialize_ok,
+                result.ok_value,
+                result.ok_value,
+                ResultSerializationError,
+            )
+            if isinstance(encoded, Err):
+                return Err(encoded.err_value)
+            envelope: SerializedOk[OkWire] = {
+                "status": "ok",
+                "value": _require_ok(encoded).ok_value,
+            }
+            return Ok(envelope)
+
+        result = _require_err(result)
+        encoded = _run_sync(
+            self._serialize_err,
+            result.err_value,
+            result.err_value,
+            ResultSerializationError,
         )
+        if isinstance(encoded, Err):
+            return Err(encoded.err_value)
+        envelope: SerializedErr[ErrWire] = {
+            "status": "error",
+            "error": _require_ok(encoded).ok_value,
+        }
+        return Ok(envelope)
 
     def deserialize(
         self,
         value: object,
     ) -> Result[OkOutput, ErrOutput | ResultDeserializationError]:
-        return cast(
-            "Result[OkOutput, ErrOutput | ResultDeserializationError]",
-            self._deserialize(value, allow_async=False),
+        envelope = _envelope(value)
+        if envelope is None:
+            return Err(ResultDeserializationError(value))
+
+        if envelope["status"] == "ok":
+            decoded = cast(
+                "Result[OkOutput, ResultDeserializationError]",
+                _run_sync(
+                    self._deserialize_ok,
+                    cast("OkWire", envelope.get("value")),
+                    value,
+                    ResultDeserializationError,
+                ),
+            )
+            if isinstance(decoded, Err):
+                return Err(decoded.err_value)
+            return Ok(_require_ok(decoded).ok_value)
+
+        decoded = cast(
+            "Result[ErrOutput, ResultDeserializationError]",
+            _run_sync(
+                self._deserialize_err,
+                cast("ErrWire", envelope.get("error")),
+                value,
+                ResultDeserializationError,
+            ),
         )
+        if isinstance(decoded, Err):
+            return Err(decoded.err_value)
+        return Err(_require_ok(decoded).ok_value)
+
+    def serialize_unsafe(
+        self,
+        result: Result[OkInput, ErrInput],
+    ) -> SerializedResult[OkWire, ErrWire]:
+        encoded = self.serialize(result)
+        if isinstance(encoded, Err):
+            raise UnwrapError(encoded, "ResultCodec.serialize_unsafe failed")
+        return _require_ok(encoded).ok_value
+
+    def deserialize_unsafe(
+        self,
+        value: object,
+    ) -> Result[OkOutput, ErrOutput]:
+        decoded = self.deserialize(value)
+        if isinstance(decoded, Err) and isinstance(
+            decoded.err_value, ResultDeserializationError
+        ):
+            raise UnwrapError(decoded, "ResultCodec.deserialize_unsafe failed")
+        return cast("Result[OkOutput, ErrOutput]", decoded)
 
 
-class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
-    _CodecBase[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput],
-):
-    """Encode and decode Result envelopes with sync or async schemas."""
+class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
+    """Encode and decode Result envelopes with asynchronous schemas."""
+
+    def __init__(
+        self,
+        *,
+        serialize_ok: AsyncSchema[OkInput, OkWire],
+        serialize_err: AsyncSchema[ErrInput, ErrWire],
+        deserialize_ok: AsyncSchema[OkWire, OkOutput],
+        deserialize_err: AsyncSchema[ErrWire, ErrOutput],
+    ) -> None:
+        self._serialize_ok = serialize_ok
+        self._serialize_err = serialize_err
+        self._deserialize_ok = deserialize_ok
+        self._deserialize_err = deserialize_err
 
     async def serialize(
         self,
         result: Result[OkInput, ErrInput],
     ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
-        return cast(
-            "Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]",
-            await _await_operation(self._serialize(result)),
+        if isinstance(result, Ok):
+            encoded = await _run_async(
+                self._serialize_ok,
+                result.ok_value,
+                result.ok_value,
+                ResultSerializationError,
+            )
+            if isinstance(encoded, Err):
+                return Err(encoded.err_value)
+            return Ok({"status": "ok", "value": _require_ok(encoded).ok_value})
+
+        result = _require_err(result)
+        encoded = await _run_async(
+            self._serialize_err,
+            result.err_value,
+            result.err_value,
+            ResultSerializationError,
         )
+        if isinstance(encoded, Err):
+            return Err(encoded.err_value)
+        return Ok({"status": "error", "error": _require_ok(encoded).ok_value})
 
     async def deserialize(
         self,
         value: object,
     ) -> Result[OkOutput, ErrOutput | ResultDeserializationError]:
-        return cast(
-            "Result[OkOutput, ErrOutput | ResultDeserializationError]",
-            await _await_operation(self._deserialize(value)),
+        envelope = _envelope(value)
+        if envelope is None:
+            return Err(ResultDeserializationError(value))
+
+        if envelope["status"] == "ok":
+            decoded = cast(
+                "Result[OkOutput, ResultDeserializationError]",
+                await _run_async(
+                    self._deserialize_ok,
+                    cast("OkWire", envelope.get("value")),
+                    value,
+                    ResultDeserializationError,
+                ),
+            )
+            if isinstance(decoded, Err):
+                return Err(decoded.err_value)
+            return Ok(_require_ok(decoded).ok_value)
+
+        decoded = cast(
+            "Result[ErrOutput, ResultDeserializationError]",
+            await _run_async(
+                self._deserialize_err,
+                cast("ErrWire", envelope.get("error")),
+                value,
+                ResultDeserializationError,
+            ),
         )
+        if isinstance(decoded, Err):
+            return Err(decoded.err_value)
+        return Err(_require_ok(decoded).ok_value)
 
+    async def serialize_unsafe(
+        self,
+        result: Result[OkInput, ErrInput],
+    ) -> SerializedResult[OkWire, ErrWire]:
+        encoded = await self.serialize(result)
+        if isinstance(encoded, Err):
+            raise UnwrapError(encoded, "AsyncResultCodec.serialize_unsafe failed")
+        return _require_ok(encoded).ok_value
 
-def _map_operation[T, U, E](
-    operation: Result[T, E] | Awaitable[Result[T, E]],
-    transform: Callable[[Result[T, E]], U],
-) -> U | Awaitable[U]:
-    if inspect.isawaitable(operation):
-
-        async def finish_async() -> U:
-            return transform(cast("Result[T, E]", await operation))
-
-        return finish_async()
-    return transform(operation)
-
-
-def _codec_config[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
-    *,
-    serialize_ok: SchemaLike[OkInput, OkWire],
-    serialize_err: SchemaLike[ErrInput, ErrWire],
-    deserialize_ok: SchemaLike[OkWire, OkOutput],
-    deserialize_err: SchemaLike[ErrWire, ErrOutput],
-) -> ResultCodecConfig[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
-    return {
-        "serialize": {"ok": serialize_ok, "err": serialize_err},
-        "deserialize": {"ok": deserialize_ok, "err": deserialize_err},
-    }
+    async def deserialize_unsafe(
+        self,
+        value: object,
+    ) -> Result[OkOutput, ErrOutput]:
+        decoded = await self.deserialize(value)
+        if isinstance(decoded, Err) and isinstance(
+            decoded.err_value, ResultDeserializationError
+        ):
+            raise UnwrapError(decoded, "AsyncResultCodec.deserialize_unsafe failed")
+        return cast("Result[OkOutput, ErrOutput]", decoded)
 
 
 def codec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
     *,
-    serialize_ok: SyncSchemaLike[OkInput, OkWire],
-    serialize_err: SyncSchemaLike[ErrInput, ErrWire],
-    deserialize_ok: SyncSchemaLike[OkWire, OkOutput],
-    deserialize_err: SyncSchemaLike[ErrWire, ErrOutput],
+    serialize_ok: SyncSchema[OkInput, OkWire],
+    serialize_err: SyncSchema[ErrInput, ErrWire],
+    deserialize_ok: SyncSchema[OkWire, OkOutput],
+    deserialize_err: SyncSchema[ErrWire, ErrOutput],
 ) -> ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
-    """Build a codec with synchronous schemas."""
+    """Build a synchronous Result codec."""
     return ResultCodec(
-        _codec_config(
-            serialize_ok=serialize_ok,
-            serialize_err=serialize_err,
-            deserialize_ok=deserialize_ok,
-            deserialize_err=deserialize_err,
-        ),
+        serialize_ok=serialize_ok,
+        serialize_err=serialize_err,
+        deserialize_ok=deserialize_ok,
+        deserialize_err=deserialize_err,
     )
 
 
 def async_codec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
     *,
-    serialize_ok: SchemaLike[OkInput, OkWire],
-    serialize_err: SchemaLike[ErrInput, ErrWire],
-    deserialize_ok: SchemaLike[OkWire, OkOutput],
-    deserialize_err: SchemaLike[ErrWire, ErrOutput],
+    serialize_ok: AsyncSchema[OkInput, OkWire],
+    serialize_err: AsyncSchema[ErrInput, ErrWire],
+    deserialize_ok: AsyncSchema[OkWire, OkOutput],
+    deserialize_err: AsyncSchema[ErrWire, ErrOutput],
 ) -> AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
-    """Build a codec with synchronous or asynchronous schemas."""
-    return AsyncResultCodec(
-        _codec_config(
-            serialize_ok=serialize_ok,
-            serialize_err=serialize_err,
-            deserialize_ok=deserialize_ok,
-            deserialize_err=deserialize_err,
-        ),
+    """Build a Result codec from asynchronous schemas."""
+    return AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput](
+        serialize_ok=serialize_ok,
+        serialize_err=serialize_err,
+        deserialize_ok=deserialize_ok,
+        deserialize_err=deserialize_err,
     )

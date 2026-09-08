@@ -1,245 +1,153 @@
-"""Tests for Result codec serialization boundaries."""
+"""Behavioral tests for Result codecs."""
 
 from __future__ import annotations
 
-import asyncio
-import json
-from pathlib import Path
 from typing import cast
 
 import pytest
 
-from better_result import Err, Ok
-from better_result._codec import SchemaFailure, async_codec, codec
-from better_result._error import (
-    ResultCodecIssue,
+from better_result import (
+    CodecIssue,
+    Err,
+    Ok,
     ResultDeserializationError,
     ResultSerializationError,
+    SchemaFailure,
+    UnwrapError,
+    async_codec,
+    codec,
+)
+from tests.codec_helpers import (
+    assert_async_codec_roundtrip,
+    assert_codec_roundtrip,
 )
 
 
-def encode_number(value: int) -> str | SchemaFailure:
-    if value < 0:
-        issue: ResultCodecIssue = {"message": "number must be non-negative"}
-        return SchemaFailure((issue,))
-    return str(value)
-
-
-def encode_error(value: str) -> str:
+def identity(value: object) -> object:
     return value
 
 
-def decode_number(value: str | None) -> int | SchemaFailure:
-    if not isinstance(value, str) or not value.isdecimal():
-        issue: ResultCodecIssue = {"message": "expected digits"}
-        return SchemaFailure((issue,))
-    return int(value)
-
-
-def decode_error(value: str) -> str:
-    return value
-
-
-CONFIG = codec(
-    serialize_ok=encode_number,
-    serialize_err=encode_error,
-    deserialize_ok=decode_number,
-    deserialize_err=decode_error,
-)
-
-GOLDEN_DIR = Path(__file__).with_name("golden") / "codec"
-
-
-def _golden_json(filename: str) -> object:
-    return json.loads((GOLDEN_DIR / filename).read_text(encoding="utf-8"))
-
-
-def _stable_codec_error(
-    error: ResultDeserializationError | ResultSerializationError,
-) -> dict[str, object | None]:
-    payload = error.to_json()
-    stable = {
-        key: payload[key]
-        for key in ("_tag", "name", "message", "value", "issues")
-        if key in payload
-    }
-    return cast("dict[str, object | None]", json.loads(json.dumps(stable)))
-
-
-def test_codec_serializes_and_deserializes_both_result_branches() -> None:
-    result_codec = CONFIG
-
-    encoded_success = result_codec.serialize(Ok(42))
-    assert isinstance(encoded_success, Ok)
-    assert encoded_success.value == {"status": "ok", "value": "42"}
-
-    encoded_error = result_codec.serialize(Err("missing"))
-    assert isinstance(encoded_error, Ok)
-    assert encoded_error.value == {"status": "error", "error": "missing"}
-
-    decoded_success = result_codec.deserialize({"status": "ok", "value": "42"})
-    assert isinstance(decoded_success, Ok)
-    assert decoded_success.value == 42
-
-    decoded_error = result_codec.deserialize({"status": "error", "error": "missing"})
-    assert isinstance(decoded_error, Err)
-    assert decoded_error.error == "missing"
-
-
-def test_codec_returns_typed_errors_for_invalid_envelopes_and_payloads() -> None:
-    result_codec = CONFIG
-
-    invalid_envelope = result_codec.deserialize({"status": "unknown"})
-    assert isinstance(invalid_envelope, Err)
-    assert isinstance(invalid_envelope.error, ResultDeserializationError)
-    assert invalid_envelope.error.value == {"status": "unknown"}
-
-    invalid_payload = result_codec.deserialize({"status": "ok", "value": "nope"})
-    assert isinstance(invalid_payload, Err)
-    assert isinstance(invalid_payload.error, ResultDeserializationError)
-    assert invalid_payload.error.issues == ({"message": "expected digits"},)
-
-    invalid_output = result_codec.serialize(Ok(-1))
-    assert isinstance(invalid_output, Err)
-    assert isinstance(invalid_output.error, ResultSerializationError)
-    assert invalid_output.error.value == -1
-
-
-def test_codec_wire_envelopes_match_golden_protocol_files() -> None:
-    result_codec = CONFIG
-
-    encoded_success = result_codec.serialize(Ok(42))
-    assert isinstance(encoded_success, Ok)
-    assert encoded_success.value == _golden_json("ok-envelope.json")
-
-    encoded_error = result_codec.serialize(Err("missing"))
-    assert isinstance(encoded_error, Ok)
-    assert encoded_error.value == _golden_json("error-envelope.json")
-
-
-def test_codec_fixture_inputs_and_boundary_errors_match_golden_files() -> None:
-    result_codec = CONFIG
-
-    decoded_success = result_codec.deserialize(_golden_json("ok-envelope.json"))
-    assert isinstance(decoded_success, Ok)
-    assert decoded_success.value == 42
-
-    decoded_error = result_codec.deserialize(_golden_json("error-envelope.json"))
-    assert isinstance(decoded_error, Err)
-    assert decoded_error.error == "missing"
-
-    invalid_envelope = result_codec.deserialize(_golden_json("invalid-envelope.json"))
-    assert isinstance(invalid_envelope, Err)
-    assert isinstance(invalid_envelope.error, ResultDeserializationError)
-    assert _stable_codec_error(invalid_envelope.error) == _golden_json(
-        "invalid-envelope-error.json",
+def test_codec_serializes_and_deserializes_both_branches() -> None:
+    result_codec = codec(
+        serialize_ok=lambda value: {"name": value},
+        serialize_err=lambda error: {"code": error},
+        deserialize_ok=lambda value: value["name"],
+        deserialize_err=lambda value: value["code"],
     )
 
-    invalid_payload = result_codec.deserialize(_golden_json("invalid-payload.json"))
-    assert isinstance(invalid_payload, Err)
-    assert isinstance(invalid_payload.error, ResultDeserializationError)
-    assert _stable_codec_error(invalid_payload.error) == _golden_json(
-        "invalid-payload-error.json",
+    assert_codec_roundtrip(
+        result_codec,
+        Ok("Ada"),
+        expected_wire={"status": "ok", "value": {"name": "Ada"}},
+        expected_result=Ok("Ada"),
     )
-
-    invalid_output = result_codec.serialize(Ok(-1))
-    assert isinstance(invalid_output, Err)
-    assert isinstance(invalid_output.error, ResultSerializationError)
-    assert _stable_codec_error(invalid_output.error) == _golden_json(
-        "serialization-error.json",
+    assert_codec_roundtrip(
+        result_codec,
+        Err(404),
+        expected_wire={"status": "error", "error": {"code": 404}},
+        expected_result=Err(404),
     )
 
 
-def test_codec_errors_are_explicit_result_values() -> None:
-    result_codec = CONFIG
+def test_codec_returns_expected_errors_without_catching_schema_bugs() -> None:
+    issue = cast("CodecIssue", {"message": "expected an integer"})
 
-    encoded = result_codec.serialize(Ok(42))
-    assert isinstance(encoded, Ok)
-    assert encoded.value == {"status": "ok", "value": "42"}
-    decoded_error = result_codec.deserialize(
-        {"status": "error", "error": "missing"},
+    def reject(_: object) -> SchemaFailure:
+        return SchemaFailure([issue])
+
+    result_codec = codec(
+        serialize_ok=reject,
+        serialize_err=identity,
+        deserialize_ok=reject,
+        deserialize_err=identity,
     )
-    assert isinstance(decoded_error, Err)
-    assert decoded_error.error == "missing"
 
-    invalid_output = result_codec.serialize(Ok(-1))
-    assert isinstance(invalid_output, Err)
-    invalid_input = result_codec.deserialize({"status": "ok", "value": "nope"})
-    assert isinstance(invalid_input, Err)
+    serialized = result_codec.serialize(Ok("not-an-int"))
+    assert isinstance(serialized, Err)
+    assert isinstance(serialized.err_value, ResultSerializationError)
+    assert serialized.err_value.value == "not-an-int"
+    assert serialized.err_value.issues == [issue]
+
+    deserialized = result_codec.deserialize({"status": "ok", "value": "bad"})
+    assert isinstance(deserialized, Err)
+    assert isinstance(deserialized.err_value, ResultDeserializationError)
+    assert deserialized.err_value.value == {"status": "ok", "value": "bad"}
+    assert deserialized.err_value.issues == [issue]
+
+    malformed = result_codec.deserialize({"status": "unknown"})
+    assert isinstance(malformed, Err)
+    assert isinstance(malformed.err_value, ResultDeserializationError)
+    assert malformed.err_value.issues is None
+
+    unhashable_status = result_codec.deserialize({"status": []})
+    assert isinstance(unhashable_status, Err)
+    assert isinstance(unhashable_status.err_value, ResultDeserializationError)
+    assert unhashable_status.err_value.value == {"status": []}
+
+    def broken(_: object) -> object:
+        message = "schema bug"
+        raise RuntimeError(message)
+
+    broken_codec = codec(
+        serialize_ok=broken,
+        serialize_err=identity,
+        deserialize_ok=identity,
+        deserialize_err=identity,
+    )
+    with pytest.raises(RuntimeError, match="schema bug"):
+        broken_codec.serialize(Ok("value"))
 
 
-def test_missing_payload_is_passed_to_the_selected_schema() -> None:
-    result_codec = CONFIG
+def test_unsafe_methods_only_remove_codec_errors() -> None:
+    result_codec = codec(
+        serialize_ok=lambda value: value,
+        serialize_err=lambda error: error,
+        deserialize_ok=lambda value: value,
+        deserialize_err=lambda value: value,
+    )
 
-    decoded = result_codec.deserialize({"status": "ok"})
-    assert isinstance(decoded, Err)
-    assert isinstance(decoded.error, ResultDeserializationError)
-    assert decoded.error.value is None
+    assert result_codec.serialize_unsafe(Ok(1)) == {"status": "ok", "value": 1}
+    assert result_codec.deserialize_unsafe({"status": "error", "error": "nope"}) == Err(
+        "nope"
+    )
+
+    def reject(_: object) -> SchemaFailure:
+        return SchemaFailure([cast("CodecIssue", {"message": "rejected"})])
+
+    rejecting_codec = codec(
+        serialize_ok=reject,
+        serialize_err=identity,
+        deserialize_ok=identity,
+        deserialize_err=identity,
+    )
+    with pytest.raises(UnwrapError, match="serialize_unsafe"):
+        rejecting_codec.serialize_unsafe(Ok(object()))
+
+    with pytest.raises(UnwrapError, match="deserialize_unsafe"):
+        result_codec.deserialize_unsafe(None)
 
 
 @pytest.mark.asyncio
-async def test_codec_preserves_schema_cancellation() -> None:
-    async def cancel(_value: int) -> str:
-        raise asyncio.CancelledError
-
-    result_codec = async_codec(
-        serialize_ok=cancel,
-        serialize_err=encode_error,
-        deserialize_ok=decode_number,
-        deserialize_err=decode_error,
-    )
-
-    with pytest.raises(asyncio.CancelledError):
-        await result_codec.serialize(Ok(1))
-
-
-@pytest.mark.asyncio
-async def test_codec_supports_async_schemas() -> None:
-    async def async_encode(value: int) -> str:
-        await asyncio.sleep(0)
+async def test_async_codec_accepts_async_schemas() -> None:
+    async def stringify(value: object) -> str:
         return str(value)
 
-    async def async_decode(value: str) -> int:
-        await asyncio.sleep(0)
-        return int(value)
-
     result_codec = async_codec(
-        serialize_ok=async_encode,
-        serialize_err=encode_error,
-        deserialize_ok=async_decode,
-        deserialize_err=decode_error,
+        serialize_ok=stringify,
+        serialize_err=stringify,
+        deserialize_ok=stringify,
+        deserialize_err=stringify,
     )
 
-    encoded = await result_codec.serialize(Ok(7))
-    assert isinstance(encoded, Ok)
-    assert encoded.value == {"status": "ok", "value": "7"}
-
-    decoded = await result_codec.deserialize({"status": "ok", "value": "7"})
-    assert isinstance(decoded, Ok)
-    assert decoded.value == 7
-
-
-@pytest.mark.asyncio
-async def test_async_codec_uses_the_same_golden_wire_protocol() -> None:
-    async def async_encode(value: int) -> str:
-        await asyncio.sleep(0)
-        return str(value)
-
-    async def async_decode(value: str) -> int:
-        await asyncio.sleep(0)
-        return int(value)
-
-    result_codec = async_codec(
-        serialize_ok=async_encode,
-        serialize_err=encode_error,
-        deserialize_ok=async_decode,
-        deserialize_err=decode_error,
+    await assert_async_codec_roundtrip(
+        result_codec,
+        Ok(42),
+        expected_wire={"status": "ok", "value": "42"},
+        expected_result=Ok("42"),
     )
-
-    encoded = await result_codec.serialize(Ok(42))
-    assert isinstance(encoded, Ok)
-    assert encoded.value == _golden_json("ok-envelope.json")
-
-    decoded = await result_codec.deserialize(_golden_json("ok-envelope.json"))
-    assert isinstance(decoded, Ok)
-    assert decoded.value == 42
+    await assert_async_codec_roundtrip(
+        result_codec,
+        Err(404),
+        expected_wire={"status": "error", "error": "404"},
+        expected_result=Err("404"),
+    )

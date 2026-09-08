@@ -126,6 +126,6 @@ jobs:
           path: dist/
 
       # Configure this repository as a trusted publisher for the
-      # better-result project on PyPI.
+      # py-better-result project on PyPI.
       - name: publish to PyPI
         run: uv publish --trusted-publishing always

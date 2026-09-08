@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypedDict, cast
 
-from better_result.core import Err, Ok, PanicError, Result, panic
-from better_result.error import (
+from better_result._core import Err, Ok, PanicError, Result, panic
+from better_result._error import (
     ResultCodecIssue,
     ResultDeserializationError,
     ResultSerializationError,
@@ -30,15 +30,23 @@ class SchemaFailure:
     issues: Sequence[ResultCodecIssue]
 
 
-class Schema[T, U](Protocol):
-    """A synchronous validator for a Result boundary."""
+class SyncSchema[T, U](Protocol):
+    """A synchronous object validator for a Result boundary."""
 
     def validate(self, value: T) -> U | SchemaFailure: ...
 
 
-type SyncSchemaLike[T, U] = Schema[T, U] | Callable[[T], U | SchemaFailure]
+class AsyncSchema[T, U](Protocol):
+    """A synchronous or asynchronous object validator."""
+
+    def validate(
+        self, value: T
+    ) -> U | SchemaFailure | Awaitable[U | SchemaFailure]: ...
+
+
+type SyncSchemaLike[T, U] = SyncSchema[T, U] | Callable[[T], U | SchemaFailure]
 type SchemaLike[T, U] = (
-    Schema[T, U] | Callable[[T], U | SchemaFailure | Awaitable[U | SchemaFailure]]
+    AsyncSchema[T, U] | Callable[[T], U | SchemaFailure | Awaitable[U | SchemaFailure]]
 )
 
 
@@ -117,7 +125,8 @@ def _run_validation[T, U, E](
         panic(panic_message, cause)
 
     if not allow_async and inspect.isawaitable(validation):
-        cast("Coroutine[None, None, U | SchemaFailure]", validation).close()
+        if inspect.iscoroutine(validation):
+            validation.close()
         panic("ResultCodec received an async schema; use async_codec")
 
     if inspect.isawaitable(validation):

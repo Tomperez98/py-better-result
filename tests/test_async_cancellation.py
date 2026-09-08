@@ -6,9 +6,9 @@ import asyncio
 
 import pytest
 
-from better_result.collections import all_results_async
-from better_result.core import Ok, Result
-from better_result.retry import TryAsyncContext, try_async
+from better_result import Ok, Result
+from better_result._collections import all_results_async
+from better_result._retry import TryAsyncContext, try_async
 
 
 @pytest.mark.asyncio

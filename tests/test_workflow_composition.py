@@ -7,8 +7,7 @@ from typing import assert_type
 
 import pytest
 
-from better_result.core import Err, Ok, Result
-from better_result.error import TaggedError
+from better_result import Err, Ok, Result, TaggedError
 
 
 class InvalidAmountError(TaggedError, tag="InvalidAmount"):

@@ -7,9 +7,9 @@ from typing import Never
 
 import pytest
 
-from better_result.collections import all_results_async, partition_async
-from better_result.core import Err, Ok, PanicError, Result
-from better_result.retry import AsyncRetryConfig, TryAsyncContext, try_async
+from better_result import Err, Ok, PanicError, Result
+from better_result._collections import all_results_async, partition_async
+from better_result._retry import AsyncRetryConfig, TryAsyncContext, try_async
 
 
 @pytest.mark.asyncio
@@ -78,30 +78,17 @@ async def test_try_async_panics_on_invalid_jitter_and_catch_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_result_operations_use_instance_methods() -> None:
+async def test_async_result_operations_use_the_canonical_instance_methods() -> None:
     success = Ok(2)
     failure = Err("bad")
 
     chained = await success.and_then_async(
         lambda value: _completed(Ok(str(value))),
     )
-    assert isinstance(chained, Ok)
-    assert chained.value == "2"
-
-    recovered = await failure.try_recover_async(
-        lambda value: _completed(Ok(len(value))),
-    )
-    assert isinstance(recovered, Ok)
-    assert recovered.value == 3
-
-    seen: list[object] = []
-    tapped = await success.tap_async(lambda value: _completed(seen.append(value)))
-    assert tapped is success
-    tapped_error = await failure.tap_error_async(
-        lambda value: _completed(seen.append(value)),
-    )
-    assert tapped_error is failure
-    assert seen == [2, "bad"]
+    assert chained == Ok("2")
+    assert await failure.and_then_async(lambda _: _completed(Ok("unused"))) == failure
+    assert success.map(lambda value: value + 1) == Ok(3)
+    assert failure.map_error(str.upper) == Err("BAD")
 
 
 @pytest.mark.asyncio

@@ -10,14 +10,9 @@ from typing import cast
 
 import pytest
 
-from better_result.codec import ResultCodec, SchemaFailure, async_codec, codec
-from better_result.core import Err, Ok
-from better_result.error import (
-    ResultCodecIssue,
-    ResultDeserializationError,
-    TaggedError,
-    tagged_error,
-)
+from better_result import Err, Ok, TaggedError
+from better_result._codec import ResultCodec, SchemaFailure, async_codec, codec
+from better_result._error import ResultCodecIssue, ResultDeserializationError
 
 
 class UserNotFoundError(TaggedError, tag="UserNotFound"):
@@ -110,15 +105,54 @@ def decode_record(value: object) -> dict[str, object] | SchemaFailure:
     return dict(value)
 
 
+def _decode_user_not_found(value: Mapping[str, object]) -> TaggedError | SchemaFailure:
+    user_id = value.get("user_id")
+    if not isinstance(user_id, str):
+        issue: ResultCodecIssue = {"message": "invalid user_id"}
+        return SchemaFailure((issue,))
+    return UserNotFoundError(user_id)
+
+
+def _decode_validation_rejected(
+    value: Mapping[str, object],
+) -> TaggedError | SchemaFailure:
+    field = value.get("field")
+    issues = value.get("issues")
+    if (
+        not isinstance(field, str)
+        or not isinstance(issues, list)
+        or not all(isinstance(issue, str) for issue in issues)
+    ):
+        issue: ResultCodecIssue = {"message": "invalid validation error"}
+        return SchemaFailure((issue,))
+    return ValidationRejectedError(field, issues)
+
+
+def _decode_service_unavailable(
+    value: Mapping[str, object],
+) -> TaggedError | SchemaFailure:
+    service = value.get("service")
+    if not isinstance(service, str):
+        issue: ResultCodecIssue = {"message": "invalid service"}
+        return SchemaFailure((issue,))
+    return ServiceUnavailableError(service, RuntimeError("decoded cause"))
+
+
 def decode_tagged_error(value: object) -> TaggedError | SchemaFailure:
     if not isinstance(value, Mapping):
         issue: ResultCodecIssue = {"message": "expected a tagged error object"}
         return SchemaFailure((issue,))
+    decoders = {
+        "UserNotFound": _decode_user_not_found,
+        "ValidationRejected": _decode_validation_rejected,
+        "ServiceUnavailable": _decode_service_unavailable,
+    }
     tag = value.get("_tag")
-    if not isinstance(tag, str) or tag not in SUPPORTED_TAGS:
+    decoder = decoders.get(tag) if isinstance(tag, str) else None
+    if decoder is None:
         issue: ResultCodecIssue = {"message": "unsupported error tag"}
         return SchemaFailure((issue,))
-    return tagged_error(tag)(**dict(value))
+    return decoder(value)
 
 
 def make_codec() -> ResultCodec[

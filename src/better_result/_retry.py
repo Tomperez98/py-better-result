@@ -9,8 +9,8 @@ import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast, overload
 
-from better_result.core import Err, Ok, PanicError, Result
-from better_result.error import UnhandledError
+from better_result._core import Err, Ok, PanicError, Result
+from better_result._error import UnhandledError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

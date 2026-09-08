@@ -6,7 +6,7 @@ import asyncio
 import inspect
 from typing import TYPE_CHECKING, cast
 
-from better_result.core import Err, Ok, PanicError, Result, _require_result
+from better_result._core import Err, Ok, PanicError, Result, _require_result
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Iterable

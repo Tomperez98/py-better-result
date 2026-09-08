@@ -37,15 +37,15 @@ def main() -> None:
 
         match greeting:
             case Ok(message):
-                print(message)  # noqa: T201
+                print(message)
             case Err(message):
-                print(f"Could not load user: {message}")  # noqa: T201
+                print(f"Could not load user: {message}")
 
     # Use a fallback when the caller does not need to preserve the error.
     fallback = Err("service unavailable").unwrap_or_else(
         lambda error: f"using cached data ({error})"
     )
-    print(fallback)  # noqa: T201
+    print(fallback)
 
 
 if __name__ == "__main__":

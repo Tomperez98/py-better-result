@@ -10,12 +10,11 @@ from typing import (
     Final,
     Never,
     NoReturn,
+    TypeIs,
     TypeVar,
     cast,
     override,
 )
-
-from typing_extensions import TypeIs
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

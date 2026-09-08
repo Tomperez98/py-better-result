@@ -35,7 +35,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
 
@@ -84,7 +84,7 @@ jobs:
       - name: set up python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: verify tag matches pyproject version
         env:

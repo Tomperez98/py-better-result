@@ -54,7 +54,7 @@ With pip:
 pip install py-better-result
 ```
 
-`py-better-result` requires Python 3.12 or newer. The runtime dependency is `typing-extensions`.
+`py-better-result` requires Python 3.13 or newer.
 
 ## Examples
 

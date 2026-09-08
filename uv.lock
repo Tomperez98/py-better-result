@@ -4,15 +4,45 @@ requires-python = ">=3.12"
 
 [manifest]
 members = [
+    "better-result-example",
+    "example-application-workflow",
+    "example-async-boundaries",
+    "example-async-traversal",
     "example-async-workflows",
     "example-basic",
     "example-cancellation",
     "example-codec",
     "example-collections",
     "example-cpu-heavy-cancellation",
+    "example-recovery",
     "example-retry",
     "example-validation",
+    "example-validation-collection",
     "py-better-result",
+]
+
+[[package]]
+name = "better-result-example"
+version = "0.1.0"
+source = { editable = "tools/example-runner" }
+dependencies = [
+    { name = "click" },
+    { name = "py-better-result" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.1,<9" },
+    { name = "py-better-result", editable = "." },
+]
+
+[[package]]
+name = "click"
+version = "8.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/0e/7fa0ef50764b67090eca4114772a2abf8b6148198475e54c660b97caeee6/click-8.5.0.tar.gz", hash = "sha256:ba0d2089de75ea0310e2dde03160e6ca10009947fb95a182f9b54021bb272e34", size = 382235, upload-time = "2026-08-26T13:33:14.56Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl", hash = "sha256:255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360", size = 125251, upload-time = "2026-08-26T13:33:12.928Z" },
 ]
 
 [[package]]
@@ -124,6 +154,39 @@ wheels = [
 ]
 
 [[package]]
+name = "example-application-workflow"
+version = "0.1.0"
+source = { virtual = "examples/application-workflow" }
+dependencies = [
+    { name = "py-better-result" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "py-better-result", editable = "." }]
+
+[[package]]
+name = "example-async-boundaries"
+version = "0.1.0"
+source = { virtual = "examples/async-boundaries" }
+dependencies = [
+    { name = "py-better-result" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "py-better-result", editable = "." }]
+
+[[package]]
+name = "example-async-traversal"
+version = "0.1.0"
+source = { virtual = "examples/async-traversal" }
+dependencies = [
+    { name = "py-better-result" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "py-better-result", editable = "." }]
+
+[[package]]
 name = "example-async-workflows"
 version = "0.1.0"
 source = { virtual = "examples/async-workflows" }
@@ -190,6 +253,17 @@ dependencies = [
 requires-dist = [{ name = "py-better-result", editable = "." }]
 
 [[package]]
+name = "example-recovery"
+version = "0.1.0"
+source = { virtual = "examples/recovery" }
+dependencies = [
+    { name = "py-better-result" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "py-better-result", editable = "." }]
+
+[[package]]
 name = "example-retry"
 version = "0.1.0"
 source = { virtual = "examples/retry" }
@@ -204,6 +278,17 @@ requires-dist = [{ name = "py-better-result", editable = "." }]
 name = "example-validation"
 version = "0.1.0"
 source = { virtual = "examples/validation" }
+dependencies = [
+    { name = "py-better-result" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "py-better-result", editable = "." }]
+
+[[package]]
+name = "example-validation-collection"
+version = "0.1.0"
+source = { virtual = "examples/validation-collection" }
 dependencies = [
     { name = "py-better-result" },
 ]
@@ -312,7 +397,7 @@ wheels = [
 
 [[package]]
 name = "py-better-result"
-version = "1.0.3"
+version = "1.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "typing-extensions" },

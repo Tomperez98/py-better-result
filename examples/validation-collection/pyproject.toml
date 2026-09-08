@@ -1,0 +1,12 @@
+[project]
+name = "example-validation-collection"
+version = "0.1.0"
+description = "Accumulating validation example for py-better-result"
+requires-python = ">=3.12"
+dependencies = ["py-better-result"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+py-better-result = { workspace = true }

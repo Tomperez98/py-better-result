@@ -13,6 +13,7 @@ from better_result import (
     CodecIssue,
     Err,
     Ok,
+    Result,
     ResultCodec,
     SchemaFailure,
     SyncSchema,
@@ -20,6 +21,7 @@ from better_result import (
     async_codec,
     codec,
 )
+from better_result._codec import _require_err, _require_ok
 
 ISSUE: CodecIssue = {"message": "rejected"}
 
@@ -44,6 +46,15 @@ class NonCoroutineAwaitable:
     def __await__(self) -> Iterator[object]:
         """Return an await iterator without being a coroutine."""
         return iter(())
+
+
+def test_require_helpers_reject_unknown_result_variants() -> None:
+    invalid = cast("Result[int, str]", object())
+
+    with pytest.raises(TypeError, match="expected an Ok Result"):
+        _require_ok(invalid)
+    with pytest.raises(TypeError, match="expected an Err Result"):
+        _require_err(invalid)
 
 
 def test_sync_codec_covers_error_branches_and_rejects_async_schemas() -> None:

@@ -8,7 +8,7 @@ preserving input order.
 From the repository root:
 
 ```bash
-uv run --package example-async-workflows python examples/async-workflows/main.py
+uv run better-result-example async-workflows
 ```
 
 Expected output:

@@ -5,7 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from better_result import Err, Ok, SchemaFailure, codec
+from better_result import (
+    Err,
+    Ok,
+    ResultDeserializationError,
+    SchemaFailure,
+    codec,
+    is_err,
+    is_ok,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,20 +62,36 @@ def main() -> None:
     )
 
     encoded = user_codec.serialize(Ok(User(42, "Ada")))
+    assert is_ok(encoded)
+    assert encoded == Ok({"status": "ok", "value": {"id": 42, "name": "Ada"}})
     print(encoded)
 
-    if isinstance(encoded, Ok):
-        decoded = user_codec.deserialize(encoded.ok_value)
-        print(decoded)
+    decoded = user_codec.deserialize(encoded.ok_value)
+    assert decoded == Ok(User(42, "Ada"))
+    print(decoded)
 
     # Wire-level errors remain Err values after decoding.
-    print(user_codec.deserialize({"status": "error", "error": {"code": "not_found"}}))
+    decoded_error = user_codec.deserialize(
+        {"status": "error", "error": {"code": "not_found"}}
+    )
+    assert decoded_error == Err("not_found")
+    print(decoded_error)
 
     # Schema failures are returned as ResultDeserializationError values.
-    print(user_codec.deserialize({"status": "ok", "value": {"id": "wrong"}}))
+    schema_failure = user_codec.deserialize({"status": "ok", "value": {"id": "wrong"}})
+    assert is_err(schema_failure)
+    assert isinstance(schema_failure.err_value, ResultDeserializationError)
+    assert schema_failure.err_value.value == {
+        "status": "ok",
+        "value": {"id": "wrong"},
+    }
+    print(schema_failure)
 
-    # Serialization errors use the same Result shape.
-    print(user_codec.serialize(Err("not_found")))
+    # Serializing an Err produces an error envelope.
+    serialized_error = user_codec.serialize(Err("not_found"))
+    assert is_ok(serialized_error)
+    assert serialized_error == Ok({"status": "error", "error": {"code": "not_found"}})
+    print(serialized_error)
 
 
 if __name__ == "__main__":

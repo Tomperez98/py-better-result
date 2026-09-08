@@ -1,8 +1,17 @@
-"""Retry an expected exception with a bounded, typed retry policy."""
+"""Retry expected exceptions with bounded, typed retry policies."""
 
 from __future__ import annotations
 
-from better_result import RetryContext, RetryPolicy, TryContext, try_result
+import asyncio
+
+from better_result import (
+    Ok,
+    RetryContext,
+    RetryPolicy,
+    TryContext,
+    try_async,
+    try_result,
+)
 
 
 def main() -> None:
@@ -23,6 +32,8 @@ def main() -> None:
     )
     result = try_result(request, catch=str, retry=policy)
 
+    assert result == Ok("response body")
+    assert attempts == 3
     print(result)
     print(f"attempts={attempts}")
 
@@ -54,9 +65,36 @@ def main() -> None:
         retry=dynamic_policy,
     )
 
+    assert dynamic_result == Ok("dynamic response")
+    assert dynamic_attempts == 3
+    assert dynamic_delays == [0.1, 0.2]
     print(dynamic_result)
     print(f"dynamic_attempts={dynamic_attempts}")
     print(f"dynamic_delays={dynamic_delays}")
+
+    asyncio.run(async_demo())
+
+
+async def async_request(context: TryContext) -> str:
+    if context.attempt == 1:
+        message = "temporary async failure"
+        raise TimeoutError(message)
+    return "async response"
+
+
+async def async_demo() -> None:
+    result = await try_async(
+        async_request,
+        catch=str,
+        retry=RetryPolicy[str].exponential(
+            times=2,
+            initial_delay=0,
+            jitter=0.25,
+            should_retry=lambda context: "temporary" in context.error,
+        ),
+    )
+    assert result == Ok("async response")
+    print(result)
 
 
 if __name__ == "__main__":

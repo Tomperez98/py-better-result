@@ -7,7 +7,7 @@ Cancel CPU-heavy asynchronous work at explicit chunk boundaries.
 From the repository root:
 
 ```bash
-uv run --package example-cpu-heavy-cancellation python examples/cpu-heavy-cancellation/main.py
+uv run better-result-example cpu-heavy-cancellation
 ```
 
 Expected output:

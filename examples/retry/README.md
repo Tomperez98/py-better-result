@@ -1,13 +1,13 @@
 # Retry
 
-Retry an expected exception with a bounded, typed exponential-backoff policy.
+Retry expected exceptions with bounded, typed synchronous and asynchronous policies.
 
 ## Run it
 
 From the repository root:
 
 ```bash
-uv run --package example-retry python examples/retry/main.py
+uv run better-result-example retry
 ```
 
 Expected output:
@@ -29,5 +29,9 @@ executes the exponential schedule without making the example slow.
 
 `dynamic_request` exercises a dynamic schedule for real. Its delay callback
 receives the mapped error and attempt number, records delays of `0.1` and
-`0.2` seconds, and the operation succeeds on the third attempt. The complete
-flow is in [`main.py`](main.py).
+`0.2` seconds, and the operation succeeds on the third attempt.
+
+`async_request` demonstrates the same typed retry policy with `try_async`. It
+uses a zero initial delay so the example remains fast, and enables jitter to
+exercise the jittered schedule without making the output nondeterministic. The
+complete flow is in [`main.py`](main.py).

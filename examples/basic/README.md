@@ -8,7 +8,7 @@ expected failures.
 From the repository root:
 
 ```bash
-uv run --package example-basic python examples/basic/main.py
+uv run better-result-example basic
 ```
 
 Expected output:

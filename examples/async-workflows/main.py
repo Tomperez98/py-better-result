@@ -41,6 +41,7 @@ async def main() -> None:
             fetch_display_name(404),
         )
     )
+    assert names == Err("user 404 not found")
     print(names)
 
 

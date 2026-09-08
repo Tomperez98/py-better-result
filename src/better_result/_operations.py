@@ -305,13 +305,15 @@ def _coerce_retry_policy[E](
 ) -> RetryPolicy[E] | None:
     if retry is None:
         return None
-    if isinstance(retry, bool) or not isinstance(retry, (int, RetryPolicy)):
+    if isinstance(retry, RetryPolicy):
+        return retry
+    if isinstance(retry, bool) or not isinstance(retry, int):
         _raise_retry_policy_error("retry must be a non-negative integer or policy")
-    if isinstance(retry, int):
-        if retry < 0:
-            _raise_retry_policy_error("retry must be non-negative")
-        return cast("RetryPolicy[E]", RetryPolicy.immediate(retry))
-    return retry
+    if retry < 0:
+        _raise_retry_policy_error("retry must be non-negative")
+    if retry == 0:
+        return None
+    return cast("RetryPolicy[E]", RetryPolicy.immediate(retry))
 
 
 @overload
@@ -531,10 +533,11 @@ def all_results[T, E](results: Iterable[Result[T, E]]) -> Result[tuple[T, ...], 
     """Collect all success values, or return the first error in input order."""
     values: list[T] = []
     for result in results:
-        if isinstance(result, Err):
-            return Err(result.err_value)
-        assert isinstance(result, Ok)
-        values.append(result.ok_value)
+        if isinstance(result, Ok):
+            values.append(result.ok_value)
+            continue
+        assert isinstance(result, Err)
+        return Err(result.err_value)
     return Ok(tuple(values))
 
 
@@ -637,9 +640,19 @@ async def all_results_async[T, E](
     results: Iterable[Result[T, E] | Awaitable[Result[T, E]]],
 ) -> Result[tuple[T, ...], E]:
     """Await Results concurrently, then collect successes in input order."""
+    pending = list(results)
+    immediate: list[Result[T, E]] = []
+    all_immediate = True
+    for result in pending:
+        if isinstance(result, Result):
+            immediate.append(result)
+        else:
+            all_immediate = False
+    if all_immediate:
+        return all_results(immediate)
     resolved = cast(
         "list[Result[T, E]]",
-        await asyncio.gather(*(_resolve_result(result) for result in results)),
+        await asyncio.gather(*(_resolve_result(result) for result in pending)),
     )
     return all_results(resolved)
 
@@ -690,8 +703,18 @@ async def partition_results_async[T, E](
     results: Iterable[Result[T, E] | Awaitable[Result[T, E]]],
 ) -> tuple[list[T], list[E]]:
     """Await Results concurrently, then partition values in input order."""
+    pending = list(results)
+    immediate: list[Result[T, E]] = []
+    all_immediate = True
+    for result in pending:
+        if isinstance(result, Result):
+            immediate.append(result)
+        else:
+            all_immediate = False
+    if all_immediate:
+        return partition_results(immediate)
     resolved = cast(
         "list[Result[T, E]]",
-        await asyncio.gather(*(_resolve_result(result) for result in results)),
+        await asyncio.gather(*(_resolve_result(result) for result in pending)),
     )
     return partition_results(resolved)

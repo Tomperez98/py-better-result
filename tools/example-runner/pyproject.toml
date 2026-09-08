@@ -2,7 +2,7 @@
 name = "better-result-example"
 version = "0.1.0"
 description = "Click runner for py-better-result examples"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
   "click>=8.1,<9",
   "py-better-result",

@@ -36,6 +36,8 @@ def test_codec_serializes_and_deserializes_both_branches() -> None:
 
     assert encoded_ok == Ok({"status": "ok", "value": {"name": "Ada"}})
     assert encoded_err == Ok({"status": "error", "error": {"code": 404}})
+    assert isinstance(encoded_ok, Ok)
+    assert isinstance(encoded_err, Ok)
     assert result_codec.deserialize(encoded_ok.ok_value) == Ok("Ada")
     assert result_codec.deserialize(encoded_err.ok_value) == Err(404)
 
@@ -132,4 +134,5 @@ async def test_async_codec_accepts_async_schemas() -> None:
 
     encoded = await result_codec.serialize(Ok(42))
     assert encoded == Ok({"status": "ok", "value": "42"})
+    assert isinstance(encoded, Ok)
     assert await result_codec.deserialize(encoded.ok_value) == Ok("42")

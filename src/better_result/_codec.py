@@ -66,6 +66,20 @@ def _envelope(value: object) -> Mapping[object, object] | None:
     return cast("Mapping[object, object]", value)
 
 
+def _require_ok[T, E](value: Result[T, E]) -> Ok[T]:
+    if not isinstance(value, Ok):
+        message = "expected an Ok Result"
+        raise TypeError(message)
+    return value
+
+
+def _require_err[T, E](value: Result[T, E]) -> Err[E]:
+    if not isinstance(value, Err):
+        message = "expected an Err Result"
+        raise TypeError(message)
+    return value
+
+
 def _finish[T, E](
     value: T | SchemaFailure,
     original: object,
@@ -140,10 +154,11 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
                 return Err(encoded.err_value)
             envelope: SerializedOk[OkWire] = {
                 "status": "ok",
-                "value": encoded.ok_value,
+                "value": _require_ok(encoded).ok_value,
             }
             return Ok(envelope)
 
+        result = _require_err(result)
         encoded = _run_sync(
             self._serialize_err,
             result.err_value,
@@ -154,7 +169,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             return Err(encoded.err_value)
         envelope: SerializedErr[ErrWire] = {
             "status": "error",
-            "error": encoded.ok_value,
+            "error": _require_ok(encoded).ok_value,
         }
         return Ok(envelope)
 
@@ -178,7 +193,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             )
             if isinstance(decoded, Err):
                 return Err(decoded.err_value)
-            return Ok(decoded.ok_value)
+            return Ok(_require_ok(decoded).ok_value)
 
         decoded = cast(
             "Result[ErrOutput, ResultDeserializationError]",
@@ -191,7 +206,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         )
         if isinstance(decoded, Err):
             return Err(decoded.err_value)
-        return Err(decoded.ok_value)
+        return Err(_require_ok(decoded).ok_value)
 
     def serialize_unsafe(
         self,
@@ -200,7 +215,7 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         encoded = self.serialize(result)
         if isinstance(encoded, Err):
             raise UnwrapError(encoded, "ResultCodec.serialize_unsafe failed")
-        return encoded.ok_value
+        return _require_ok(encoded).ok_value
 
     def deserialize_unsafe(
         self,
@@ -243,8 +258,9 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             )
             if isinstance(encoded, Err):
                 return Err(encoded.err_value)
-            return Ok({"status": "ok", "value": encoded.ok_value})
+            return Ok({"status": "ok", "value": _require_ok(encoded).ok_value})
 
+        result = _require_err(result)
         encoded = await _run_async(
             self._serialize_err,
             result.err_value,
@@ -253,7 +269,7 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         )
         if isinstance(encoded, Err):
             return Err(encoded.err_value)
-        return Ok({"status": "error", "error": encoded.ok_value})
+        return Ok({"status": "error", "error": _require_ok(encoded).ok_value})
 
     async def deserialize(
         self,
@@ -275,7 +291,7 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             )
             if isinstance(decoded, Err):
                 return Err(decoded.err_value)
-            return Ok(decoded.ok_value)
+            return Ok(_require_ok(decoded).ok_value)
 
         decoded = cast(
             "Result[ErrOutput, ResultDeserializationError]",
@@ -288,7 +304,7 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         )
         if isinstance(decoded, Err):
             return Err(decoded.err_value)
-        return Err(decoded.ok_value)
+        return Err(_require_ok(decoded).ok_value)
 
     async def serialize_unsafe(
         self,
@@ -297,7 +313,7 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         encoded = await self.serialize(result)
         if isinstance(encoded, Err):
             raise UnwrapError(encoded, "AsyncResultCodec.serialize_unsafe failed")
-        return encoded.ok_value
+        return _require_ok(encoded).ok_value
 
     async def deserialize_unsafe(
         self,

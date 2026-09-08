@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
@@ -25,183 +26,288 @@ F = TypeVar("F")
 TBE = TypeVar("TBE", bound=BaseException)
 
 
-@dataclass(frozen=True, slots=True, repr=False)
-class Ok[T]:
+class Result[T, E](ABC):
+    """
+    Abstract common interface for successful and failed Results.
+
+    Keeping the operations on a generic common base gives type checkers one
+    ``T`` and ``E`` context when a callback is passed to a Result workflow.
+    ``Ok`` and ``Err`` remain the concrete runtime variants.
+    """
+
+    @abstractmethod
+    def is_ok(self) -> bool: ...
+
+    @abstractmethod
+    def is_err(self) -> bool: ...
+
+    @abstractmethod
+    def ok(self) -> T | None: ...
+
+    @abstractmethod
+    def err(self) -> E | None: ...
+
+    @abstractmethod
+    def expect(self, message: str) -> T: ...
+
+    @abstractmethod
+    def expect_err(self, message: str) -> E: ...
+
+    @abstractmethod
+    def unwrap(self) -> T: ...
+
+    @abstractmethod
+    def unwrap_err(self) -> E: ...
+
+    @abstractmethod
+    def unwrap_or(self, default: U) -> T | U: ...
+
+    @abstractmethod
+    def unwrap_or_else(self, op: Callable[[E], U]) -> T | U: ...
+
+    @abstractmethod
+    def unwrap_or_raise(self, error: type[TBE]) -> T: ...
+
+    @abstractmethod
+    def map(self, op: Callable[[T], U]) -> Result[U, E]: ...
+
+    @abstractmethod
+    async def map_async(self, op: Callable[[T], Awaitable[U]]) -> Result[U, E]: ...
+
+    @abstractmethod
+    def map_or(self, default: U, op: Callable[[T], U]) -> U: ...
+
+    @abstractmethod
+    def map_or_else(self, default_op: Callable[[], U], op: Callable[[T], U]) -> U: ...
+
+    @abstractmethod
+    def map_err(self, op: Callable[[E], F]) -> Result[T, F]: ...
+
+    @abstractmethod
+    def and_then[U, F](self, op: Callable[[T], Result[U, F]]) -> Result[U, E | F]: ...
+
+    @abstractmethod
+    async def and_then_async[U, F](
+        self, op: Callable[[T], Awaitable[Result[U, F]]]
+    ) -> Result[U, E | F]: ...
+
+    @abstractmethod
+    def or_else[U, F](self, op: Callable[[E], Result[U, F]]) -> Result[T | U, F]: ...
+
+    @abstractmethod
+    def inspect(self, op: Callable[[T], Any]) -> Result[T, E]: ...
+
+    @abstractmethod
+    def inspect_err(self, op: Callable[[E], Any]) -> Result[T, E]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class Ok[T](Result[T, Never]):
     __match_args__ = ("ok_value",)
     __hash__ = None
 
-    _value: T
+    value: T
 
     @override
-    def __repr__(self) -> str:
-        return f"Ok({self._value!r})"
-
     def is_ok(self) -> Literal[True]:
         return True
 
+    @override
     def is_err(self) -> Literal[False]:
         return False
 
+    @override
     def ok(self) -> T:
-        return self._value
+        return self.value
 
+    @override
     def err(self) -> None:
         return None
 
     @property
     def ok_value(self) -> T:
-        return self._value
+        return self.value
 
-    def expect(self, _message: str) -> T:
-        return self._value
+    @override
+    def expect(self, message: str) -> T:
+        return self.value
 
+    @override
     def expect_err(self, message: str) -> NoReturn:
         raise UnwrapError(self, message)
 
+    @override
     def unwrap(self) -> T:
-        return self._value
+        return self.value
 
+    @override
     def unwrap_err(self) -> NoReturn:
-
         raise UnwrapError(self, "Called `Result.unwrap_err()` on an `Ok` value")
 
-    def unwrap_or(self, _default: U) -> T:
-        return self._value
+    @override
+    def unwrap_or(self, default: U) -> T:
+        return self.value
 
-    def unwrap_or_else(self, _op: Callable[[Never], U]) -> T:
-        return self._value
+    @override
+    def unwrap_or_else(self, op: Callable[[Never], U]) -> T:
+        return self.value
 
-    def unwrap_or_raise(self, _error: object) -> T:
-        return self._value
+    @override
+    def unwrap_or_raise(self, error: type[TBE]) -> T:
+        return self.value
 
+    @override
     def map(self, op: Callable[[T], U]) -> Ok[U]:
-        return Ok(op(self._value))
+        return Ok(op(self.value))
 
+    @override
     async def map_async(self, op: Callable[[T], Awaitable[U]]) -> Ok[U]:
-        return Ok(await op(self._value))
+        return Ok(await op(self.value))
 
-    def map_or(self, _default: U, op: Callable[[T], U]) -> U:
-        return op(self._value)
+    @override
+    def map_or(self, default: U, op: Callable[[T], U]) -> U:
+        return op(self.value)
 
-    def map_or_else(self, _default_op: Callable[[], U], op: Callable[[T], U]) -> U:
-        return op(self._value)
+    @override
+    def map_or_else(self, default_op: Callable[[], U], op: Callable[[T], U]) -> U:
+        return op(self.value)
 
-    def map_err(self, _op: Callable[[Never], F]) -> Ok[T]:
+    @override
+    def map_err(self, op: Callable[[Never], F]) -> Ok[T]:
         return self
 
+    @override
     def and_then[U, E](self, op: Callable[[T], Result[U, E]]) -> Result[U, E]:
-        result = op(self._value)
+        result = op(self.value)
         return cast("Result[U, E]", _require_result(result))
 
+    @override
     async def and_then_async[U, E](
         self, op: Callable[[T], Awaitable[Result[U, E]]]
     ) -> Result[U, E]:
-        result = await op(self._value)
+        result = await op(self.value)
         return cast("Result[U, E]", _require_result(result))
 
-    def or_else[U, F](self, _op: Callable[[Never], Result[U, F]]) -> Ok[T]:
+    @override
+    def or_else[U, F](self, op: Callable[[Never], Result[U, F]]) -> Ok[T]:
         return self
 
+    @override
     def inspect(self, op: Callable[[T], Any]) -> Ok[T]:
-        op(self._value)
+        op(self.value)
         return self
 
-    def inspect_err(self, _op: Callable[[Never], Any]) -> Ok[T]:
+    @override
+    def inspect_err(self, op: Callable[[Never], Any]) -> Ok[T]:
         return self
 
 
-@dataclass(frozen=True, slots=True, repr=False)
-class Err[E]:
+@dataclass(frozen=True, slots=True)
+class Err[E](Result[Never, E]):
     __match_args__ = ("err_value",)
     __hash__ = None
 
-    _value: E
+    value: E
 
     @override
-    def __repr__(self) -> str:
-        return f"Err({self._value!r})"
-
     def is_ok(self) -> Literal[False]:
         return False
 
+    @override
     def is_err(self) -> Literal[True]:
         return True
 
+    @override
     def ok(self) -> None:
         return None
 
+    @override
     def err(self) -> E:
-        return self._value
+        return self.value
 
     @property
     def err_value(self) -> E:
-        return self._value
+        return self.value
 
+    @override
     def expect(self, message: str) -> NoReturn:
-        exc = UnwrapError(self, f"{message}: {self._value!r}")
-        if isinstance(self._value, BaseException):
-            raise exc from self._value
+        exc = UnwrapError(self, f"{message}: {self.value!r}")
+        if isinstance(self.value, BaseException):
+            raise exc from self.value
         raise exc
 
-    def expect_err(self, _message: str) -> E:
-        return self._value
+    @override
+    def expect_err(self, message: str) -> E:
+        return self.value
 
+    @override
     def unwrap(self) -> NoReturn:
         exc = UnwrapError(
             self,
-            f"Called `Result.unwrap()` on an `Err` value: {self._value!r}",
+            f"Called `Result.unwrap()` on an `Err` value: {self.value!r}",
         )
-        if isinstance(self._value, BaseException):
-            raise exc from self._value
+        if isinstance(self.value, BaseException):
+            raise exc from self.value
         raise exc
 
+    @override
     def unwrap_err(self) -> E:
-        return self._value
+        return self.value
 
+    @override
     def unwrap_or(self, default: U) -> U:
         return default
 
+    @override
     def unwrap_or_else[T](self, op: Callable[[E], T]) -> T:
-        return op(self._value)
+        return op(self.value)
 
+    @override
     def unwrap_or_raise(self, error: type[TBE]) -> NoReturn:
-        raise error(self._value)
+        raise error(self.value)
 
-    def map(self, _op: Callable[[Never], U]) -> Err[E]:
+    @override
+    def map(self, op: Callable[[Never], U]) -> Err[E]:
         return self
 
-    async def map_async(self, _op: Callable[[Never], Awaitable[U]]) -> Err[E]:
+    @override
+    async def map_async(self, op: Callable[[Never], Awaitable[U]]) -> Err[E]:
         return self
 
-    def map_or(self, default: U, _op: Callable[[Never], U]) -> U:
+    @override
+    def map_or(self, default: U, op: Callable[[Never], U]) -> U:
         return default
 
-    def map_or_else(self, default_op: Callable[[], U], _op: Callable[[Never], U]) -> U:
+    @override
+    def map_or_else(self, default_op: Callable[[], U], op: Callable[[Never], U]) -> U:
         return default_op()
 
+    @override
     def map_err(self, op: Callable[[E], F]) -> Err[F]:
-        return Err(op(self._value))
+        return Err(op(self.value))
 
-    def and_then[U, F](self, _op: Callable[[Never], Result[U, F]]) -> Err[E]:
+    @override
+    def and_then[U, F](self, op: Callable[[Never], Result[U, F]]) -> Err[E]:
         return self
 
+    @override
     async def and_then_async[U, F](
-        self, _op: Callable[[Never], Awaitable[Result[U, F]]]
+        self, op: Callable[[Never], Awaitable[Result[U, F]]]
     ) -> Err[E]:
         return self
 
+    @override
     def or_else[T, F](self, op: Callable[[E], Result[T, F]]) -> Result[T, F]:
-        return op(self._value)
+        return op(self.value)
 
-    def inspect(self, _op: Callable[[Never], Any]) -> Err[E]:
+    @override
+    def inspect(self, op: Callable[[Never], Any]) -> Err[E]:
         return self
 
+    @override
     def inspect_err(self, op: Callable[[E], Any]) -> Err[E]:
-        op(self._value)
+        op(self.value)
         return self
-
-
-type Result[T, E] = Ok[T] | Err[E]
 
 
 OkErr: Final = (Ok, Err)

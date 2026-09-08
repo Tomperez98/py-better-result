@@ -110,16 +110,20 @@ def test_sync_codec_type_contract() -> None:
     encoded = result_codec.serialize(Ok(User(1)))
     if isinstance(encoded, Ok):
         assert_type(encoded.ok_value, SerializedResult[UserWire, UserErrorWire])
-    else:
+    elif isinstance(encoded, Err):
         assert_type(encoded.err_value, ResultSerializationError)
+    else:
+        pytest.fail("unknown Result variant")
 
     decoded = result_codec.deserialize(
         {"status": "error", "error": {"code": "missing"}}
     )
     if isinstance(decoded, Ok):
         assert_type(decoded.ok_value, User)
-    else:
+    elif isinstance(decoded, Err):
         assert_type(decoded.err_value, UserError | ResultDeserializationError)
+    else:
+        pytest.fail("unknown Result variant")
 
 
 def test_async_codec_type_contract() -> None:

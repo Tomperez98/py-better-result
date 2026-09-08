@@ -17,8 +17,8 @@ def test_variants_have_symmetric_shape_and_value_access() -> None:
     success = Ok(3)
     failure = Err("bad")
 
-    assert repr(success) == "Ok(3)"
-    assert repr(failure) == "Err('bad')"
+    assert repr(success) == "Ok(value=3)"
+    assert repr(failure) == "Err(value='bad')"
     assert success == Ok(3)
     assert failure == Err("bad")
     assert success != failure
@@ -63,9 +63,9 @@ def test_variants_are_immutable_and_unhashable() -> None:
     failure = Err("bad")
 
     with pytest.raises(FrozenInstanceError):
-        success.__setattr__("_value", 4)
+        success.__setattr__("value", 4)
     with pytest.raises(FrozenInstanceError):
-        failure.__setattr__("_value", "changed")
+        failure.__setattr__("value", "changed")
 
     assert Ok.__hash__ is None
     assert Err.__hash__ is None

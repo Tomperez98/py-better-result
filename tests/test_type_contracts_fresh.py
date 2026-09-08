@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Never, assert_type
 
 import pytest
 
-from better_result._core import Err, Ok, Result, UnwrapError, is_err, is_ok
+from better_result._core import Err, Ok, Result, UnwrapError
 
 
 def test_variant_types_are_precise() -> None:
@@ -62,25 +62,25 @@ def test_result_combinators_preserve_the_active_variant() -> None:
 def test_result_type_narrowing_is_lsp_friendly() -> None:
     result = typed_result(success=False)
     assert_type(result, Result[int, str])
-    # The predicates are runtime checks; ty represents their TypeIs metadata
-    # separately from bool. Concrete isinstance checks verify LSP narrowing.
-    assert is_ok(result) is False
-    assert is_err(result) is True
 
     if isinstance(result, Ok):
         assert_type(result, Ok[int])
         assert_type(result.ok_value, int)
-    else:
+    elif isinstance(result, Err):
         assert_type(result, Err[str])
         assert_type(result.err_value, str)
+    else:
+        pytest.fail("unknown Result variant")
 
     result = typed_result(success=True)
     if isinstance(result, Err):
         assert_type(result, Err[str])
         assert_type(result.err_value, str)
-    else:
+    elif isinstance(result, Ok):
         assert_type(result, Ok[int])
         assert_type(result.ok_value, int)
+    else:
+        pytest.fail("unknown Result variant")
 
 
 def test_result_success_type_is_covariant() -> None:
@@ -104,7 +104,7 @@ def test_unwrap_error_retains_a_result_shape() -> None:
     try:
         Err("bad").unwrap()
     except UnwrapError as error:
-        assert_type(error.result, Ok[Any] | Err[Any])
+        assert_type(error.result, Result[Any, Any])
 
 
 def typed_zero() -> int:

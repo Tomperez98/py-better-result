@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from typing import assert_type
 
-from better_result.core import Err, Ok, Result
-from better_result.error import TaggedError
+from better_result import Err, Ok, Result, TaggedError
 
 
 class InvalidPortError(TaggedError, tag="InvalidPort"):
@@ -86,13 +85,20 @@ def test_tagged_boundary_errors_are_exhaustively_matchable() -> None:
     assert isinstance(invalid, Err)
     assert isinstance(unavailable, Err)
 
-    handlers = {
-        "InvalidPort": lambda error: f"invalid input: {error.input}",
-        "PortUnavailable": lambda error: f"unavailable: {error.message}",
-    }
-
-    assert invalid.error.match(handlers) == "invalid input: nope"
-    assert unavailable.error.match(handlers) == "unavailable: Port source unavailable"
+    assert (
+        invalid.match(
+            lambda _value: "unexpected",
+            lambda error: f"invalid input: {error.input}",
+        )
+        == "invalid input: nope"
+    )
+    assert (
+        unavailable.match(
+            lambda _value: "unexpected",
+            lambda error: f"unavailable: {error.message}",
+        )
+        == "unavailable: Port source unavailable"
+    )
 
 
 def test_tagged_boundary_errors_preserve_context_when_serialized() -> None:

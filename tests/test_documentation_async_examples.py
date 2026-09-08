@@ -9,10 +9,9 @@ from typing import Never
 
 import pytest
 
-from better_result.collections import all_results_async, partition_async
-from better_result.core import Err, Ok, PanicError, Result
-from better_result.error import TaggedError
-from better_result.retry import AsyncRetryConfig, TryAsyncContext, try_async
+from better_result import Err, Ok, PanicError, Result, TaggedError
+from better_result._collections import all_results_async, partition_async
+from better_result._retry import AsyncRetryConfig, TryAsyncContext, try_async
 
 
 class NetworkError(TaggedError, tag="NetworkError"):

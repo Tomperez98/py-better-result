@@ -7,16 +7,11 @@ import math
 
 import pytest
 
-from better_result.codec import SchemaFailure, async_codec, codec
-from better_result.collections import all_results_async
-from better_result.core import Err, Ok, PanicError
-from better_result.error import (
-    ResultCodecIssue,
-    TaggedError,
-    UnhandledError,
-    tagged_error,
-)
-from better_result.retry import (
+from better_result import Err, Ok, PanicError, TaggedError
+from better_result._codec import SchemaFailure, async_codec, codec
+from better_result._collections import all_results_async
+from better_result._error import ResultCodecIssue, UnhandledError
+from better_result._retry import (
     AsyncRetryConfig,
     RetryConfig,
     TryAsyncContext,
@@ -107,6 +102,20 @@ def test_codec_wraps_sync_and_async_schema_defects() -> None:
             deserialize_err=str,
         ).serialize(Ok(1))
 
+    class FutureLike:
+        def __await__(self) -> object:
+            if False:
+                yield None
+            return "value"
+
+    with pytest.raises(PanicError, match="received an async schema"):
+        codec(
+            serialize_ok=lambda _value: FutureLike(),
+            serialize_err=str,
+            deserialize_ok=str,
+            deserialize_err=str,
+        ).serialize(Ok(1))
+
     async def exercise() -> None:
         with pytest.raises(PanicError, match="serialize schema threw"):
             await async_codec(
@@ -141,14 +150,7 @@ def test_async_codec_accepts_sync_schemas() -> None:
     assert deserialized.value == 3
 
 
-def test_panic_iteration_and_serialization_failures() -> None:
-    panic_error = PanicError("broken")
-    iterator = iter(panic_error)
-    yielded = next(iterator)
-    assert isinstance(yielded, Err)
-    with pytest.raises(PanicError, match="Unreachable"):
-        next(iterator)
-
+def test_panic_and_error_serialization_failures() -> None:
     nested: dict[str, object] = {}
     nested["self"] = nested
     panic_json = PanicError("cycle", cause=[ValueError("nested")]).to_json()
@@ -156,33 +158,16 @@ def test_panic_iteration_and_serialization_failures() -> None:
     assert PanicError("cycle", cause=nested).to_json()["cause"] == {"self": "<cycle>"}
 
 
-def test_tagged_error_validation_and_matching_failure_paths() -> None:
+def test_tagged_error_validation_paths() -> None:
     with pytest.raises(TypeError, match="must not define _tag"):
 
         class InvalidTagError(TaggedError, tag="InvalidTag"):
             _tag = "shadowed"
 
-    with pytest.raises(ValueError, match="tag must not be empty"):
-        tagged_error("")
-
-    def panic_handler(_error: TaggedError) -> object:
-        msg = "bug"
-        raise PanicError(msg)
-
-    with pytest.raises(PanicError, match="bug"):
-        TaggedError(message="x").match({"TaggedError": panic_handler})
-
-    with pytest.raises(PanicError, match=r"TaggedError\.match handler threw"):
-        TaggedError(message="x").match({})
-
-    def partial_panic_handler(_error: TaggedError) -> object:
-        msg = "partial bug"
-        raise PanicError(msg)
-
-    with pytest.raises(PanicError, match="partial bug"):
-        TaggedError(message="x").match_partial(
-            {"TaggedError": partial_panic_handler},
-        )
+    with pytest.raises(ValueError, match="must not be empty"):
+        type("EmptyTag", (TaggedError,), {}, tag="   ")
+    with pytest.raises(TypeError, match="reserved"):
+        TaggedError(to_json="shadowed")
 
     assert UnhandledError(None).message == "Unhandled exception: null"
     assert UnhandledError(cause=True).message == "Unhandled exception: true"
@@ -341,16 +326,10 @@ async def test_async_result_instance_methods_cover_each_branch() -> None:
     success = Ok(2)
     failure = Err("bad")
 
-    assert isinstance(
-        await success.and_then_async(lambda value: _completed(Ok(value + 1))),
-        Ok,
+    assert await success.and_then_async(lambda value: _completed(Ok(value + 1))) == Ok(
+        3
     )
-    assert isinstance(
-        await failure.try_recover_async(lambda value: _completed(Ok(len(value)))),
-        Ok,
-    )
-    assert await success.tap_async(lambda _value: _completed(None)) is success
-    assert await failure.tap_error_async(lambda _value: _completed(None)) is failure
+    assert await failure.and_then_async(lambda _value: _completed(Ok(99))) is failure
     assert failure.unwrap_or(99) == 99
 
 

@@ -9,9 +9,9 @@ from typing import cast
 
 import pytest
 
-from better_result.codec import SchemaFailure, async_codec, codec
-from better_result.core import Err, Ok, PanicError
-from better_result.error import (
+from better_result import Err, Ok
+from better_result._codec import SchemaFailure, async_codec, codec
+from better_result._error import (
     ResultCodecIssue,
     ResultDeserializationError,
     ResultSerializationError,
@@ -153,20 +153,19 @@ def test_codec_fixture_inputs_and_boundary_errors_match_golden_files() -> None:
 def test_codec_errors_are_explicit_result_values() -> None:
     result_codec = CONFIG
 
-    assert result_codec.serialize(Ok(42)).unwrap() == {
-        "status": "ok",
-        "value": "42",
-    }
+    encoded = result_codec.serialize(Ok(42))
+    assert isinstance(encoded, Ok)
+    assert encoded.value == {"status": "ok", "value": "42"}
     decoded_error = result_codec.deserialize(
         {"status": "error", "error": "missing"},
     )
     assert isinstance(decoded_error, Err)
     assert decoded_error.error == "missing"
 
-    with pytest.raises(PanicError, match="Unwrap called on Err"):
-        result_codec.serialize(Ok(-1)).unwrap()
-    with pytest.raises(PanicError, match="Unwrap called on Err"):
-        result_codec.deserialize({"status": "ok", "value": "nope"}).unwrap()
+    invalid_output = result_codec.serialize(Ok(-1))
+    assert isinstance(invalid_output, Err)
+    invalid_input = result_codec.deserialize({"status": "ok", "value": "nope"})
+    assert isinstance(invalid_input, Err)
 
 
 def test_missing_payload_is_passed_to_the_selected_schema() -> None:

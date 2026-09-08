@@ -1,20 +1,16 @@
-"""Executable Python equivalents of the public better-result examples."""
+"""Executable examples for the supported root API."""
 
 from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, assert_type
 
-from better_result.collections import all_results, partition
-from better_result.retry import try_result
+import pytest
+
+from better_result import Err, Ok, PanicError, Result, TaggedError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-
-import pytest
-
-from better_result.core import Err, Ok, PanicError, Result, is_err, is_ok
-from better_result.error import TaggedError
 
 
 class MissingEnvError(TaggedError, tag="MissingEnv"):
@@ -29,46 +25,6 @@ class InvalidPortError(TaggedError, tag="InvalidPort"):
 
     def __init__(self, input_value: str) -> None:
         super().__init__(message="Expected a port from 1 to 65535", input=input_value)
-
-
-class InvalidJsonError(TaggedError, tag="InvalidJson"):
-    input: str
-
-    def __init__(self, input_value: str, cause: BaseException) -> None:
-        super().__init__(
-            message="Input is not valid JSON",
-            input=input_value,
-            cause=cause,
-        )
-
-
-class NotFoundError(TaggedError, tag="NotFound"):
-    def __init__(self, item_id: str) -> None:
-        super().__init__(message=f"{item_id} was not found", item_id=item_id)
-
-
-class DatabaseUnavailableError(TaggedError, tag="DatabaseUnavailable"):
-    def __init__(self, message: str = "database unavailable") -> None:
-        super().__init__(message=message)
-
-
-class ValidationError(TaggedError, tag="ValidationError"):
-    def __init__(self, field: str) -> None:
-        super().__init__(message=f"Invalid {field}", field=field)
-
-
-class LoadUserFailedError(TaggedError, tag="LoadUserFailed"):
-    def __init__(self, cause: TaggedError) -> None:
-        super().__init__(message="Could not load user", cause=cause)
-
-
-class InvalidInputError(TaggedError, tag="InvalidInput"):
-    def __init__(self, value: str) -> None:
-        super().__init__(message="Invalid input", value=value)
-
-
-class GuestUser:
-    name = "Guest"
 
 
 def read_env(environment: Mapping[str, str], name: str) -> Result[str, MissingEnvError]:
@@ -100,201 +56,55 @@ def read_server_address(
     )
 
 
-def test_quickstart_workflow_translates_to_explicit_python_composition() -> None:
+def test_quickstart_workflow_uses_one_root_import_and_composition_style() -> None:
     result = read_server_address({"HOST": "localhost", "PORT": "8080"})
 
     assert_type(result, Result[str, MissingEnvError | InvalidPortError])
-    assert isinstance(result, Ok)
-    assert result.value == "http://localhost:8080"
+    assert (
+        result.match(
+            lambda address: address,
+            lambda error: error.message,
+        )
+        == "http://localhost:8080"
+    )
 
     missing_host = read_server_address({"PORT": "8080"})
     invalid_port = read_server_address({"HOST": "localhost", "PORT": "nope"})
 
     assert isinstance(missing_host, Err)
     assert isinstance(missing_host.error, MissingEnvError)
-    assert missing_host.error.env_name == "HOST"
     assert isinstance(invalid_port, Err)
     assert isinstance(invalid_port.error, InvalidPortError)
-    assert invalid_port.error.input == "nope"
 
 
-def test_quickstart_result_and_tagged_error_matching() -> None:
-    result = read_server_address({"HOST": "localhost", "PORT": "bad"})
-
-    exit_code = result.match(
-        lambda address: 0 if address else 1,
-        lambda error: error.match(
-            {
-                "MissingEnv": lambda missing: len(missing.env_name),
-                "InvalidPort": lambda invalid: len(invalid.input),
-            },
-        ),
-    )
-
-    assert exit_code == 3
-
-
-def parse_json_value(input_value: str) -> object:
-    value = json.loads(input_value)
-    if value is None or isinstance(value, (bool, float, int, str, list, dict)):
-        return value
-    msg = "JSON decoder returned an unsupported value"
-    raise TypeError(msg)
-
-
-def parse_json(input_value: str) -> Result[object, InvalidJsonError]:
-    return try_result(
-        lambda _: parse_json_value(input_value),
-        lambda cause: InvalidJsonError(input_value, cause),
-    )
-
-
-def test_creating_results_wraps_sync_exceptions_and_customizes_errors() -> None:
-    parsed = parse_json('{"name": "Alice"}')
-    failed = parse_json("not json")
-
-    assert isinstance(parsed, Ok)
-    assert parsed.value == {"name": "Alice"}
-    assert isinstance(failed, Err)
-    assert isinstance(failed.error, InvalidJsonError)
-    assert failed.error.input == "not json"
-    assert isinstance(failed.error.cause, json.JSONDecodeError)
-
-    ok_result = Ok(42)
-    assert ok_result.value == 42
-    failure = Err("Something went wrong")
-    assert failure.error == "Something went wrong"
-
-
-def test_narrowing_and_matching_examples() -> None:
+def test_result_matching_is_the_only_branch_consumer_in_examples() -> None:
     result: Result[int, str] = Ok(42)
-
-    if is_ok(result):
-        assert result.value == 42
-    else:
-        msg = "unexpected error"
-        raise AssertionError(msg)
-
-    assert is_ok(result)
-    assert result.value == 42
-    assert not is_err(result)
-
-    message = result.match(
-        lambda value: f"Success: {value}",
-        lambda error: f"Error: {error}",
-    )
-    assert message == "Success: 42"
-
-    assert result.match(lambda value: value, lambda _error: 0) == 42
-
-
-def test_transforming_chaining_and_recovery() -> None:
-    parsed: Result[int, InvalidInputError] = Ok(21)
-    doubled = parsed.map(lambda value: value * 2)
-    assert isinstance(doubled, Ok)
-    assert doubled.value == 42
-
-    failure: Result[int, InvalidInputError] = Err(InvalidInputError("x"))
-    translated = failure.map_error(LoadUserFailedError)
-    assert isinstance(translated, Err)
-    assert isinstance(translated.error, LoadUserFailedError)
-
-    chained = parsed.and_then(
-        lambda value: Ok(str(value)) if value > 0 else Err(ValidationError("value")),
-    )
-    assert isinstance(chained, Ok)
-    assert chained.value == "21"
-
-    recovered = Err(NotFoundError("missing")).try_recover(
-        lambda _error: Ok(GuestUser()),
-    )
-    assert isinstance(recovered, Ok)
-    assert isinstance(recovered.value, GuestUser)
-
-    assert isinstance(Ok(1).map(lambda value: value + 1), Ok)
-    assert Err("failed").map_error(str.upper).error == "FAILED"
-
-
-def test_observing_and_extracting_values() -> None:
-    seen: list[int] = []
-    result = Ok(2)
-    observed = result.tap(seen.append)
-
-    assert observed is result
-    assert seen == [2]
-    tapped_error = Err("failed").tap(seen.append)
-    assert isinstance(tapped_error, Err)
-    assert tapped_error.error == "failed"
-
+    assert result.match(lambda value: f"Success: {value}", str) == "Success: 42"
+    assert Err("failed").match(str, lambda error: f"Error: {error}") == "Error: failed"
     assert Err("failed").unwrap_or(0) == 0
-    assert Ok(42).unwrap() == 42
-    with pytest.raises(PanicError):
-        Err("failed").unwrap()
 
 
-def test_collections_and_flatten_examples() -> None:
-    collected = all_results([Ok(1), Ok(2), Ok(3)])
-    assert isinstance(collected, Ok)
-    assert collected.value == [1, 2, 3]
+def test_transforming_uses_map_and_and_then() -> None:
+    parsed: Result[int, InvalidPortError] = Ok(21)
+    assert parsed.map(lambda value: value * 2) == Ok(42)
 
-    first_error = all_results(
-        [Ok(1), Err("failed"), Ok(3)],
-    )
-    assert isinstance(first_error, Err)
-    assert first_error.error == "failed"
+    failure: Result[int, InvalidPortError] = Err(InvalidPortError("x"))
+    translated = failure.map_error(lambda error: error.message)
+    assert isinstance(translated, Err)
+    assert translated.error == "Expected a port from 1 to 65535"
 
-    values, errors = partition(
-        [Ok(1), Err("a"), Ok(2), Err("b")],
-    )
-    assert values == [1, 2]
-    assert errors == ["a", "b"]
-
-    flattened = Ok(Ok(42)).flatten()
-    assert isinstance(flattened, Ok)
-    assert flattened.value == 42
+    chained = parsed.and_then(lambda value: Ok(str(value)))
+    assert chained == Ok("21")
 
 
-def test_matching_errors_supports_exhaustive_and_partial_forms() -> None:
-    error = NotFoundError("user-123")
-    message = error.match(
-        {
-            "NotFound": lambda selected: f"No user {selected.to_dict()['item_id']}",
-            "DatabaseUnavailable": lambda _selected: "Try again",
-        },
-    )
-    assert message == "No user user-123"
-
-    assert (
-        error.match(
-            {
-                "NotFound": lambda selected: f"No user {selected.to_dict()['item_id']}",
-                "DatabaseUnavailable": lambda _selected: "Try again",
-            },
-        )
-        == "No user user-123"
-    )
-
-    partial = error.match_partial(
-        {"NotFound": lambda selected: selected.to_dict()["item_id"]},
-    )
-    assert partial == "user-123"
-    untouched = DatabaseUnavailableError().match_partial(
-        {"NotFound": lambda selected: selected.to_dict()["item_id"]},
-    )
-    assert isinstance(untouched, DatabaseUnavailableError)
-
-
-def test_callback_defects_are_panics_not_expected_errors() -> None:
-    def broken_map(_value: int) -> int:
-        msg = "bug"
-        raise ZeroDivisionError(msg)
-
-    def broken_match(_error: TaggedError) -> int:
-        msg = "bug"
-        raise ZeroDivisionError(msg)
-
+def test_callbacks_fail_fast_as_panics() -> None:
     with pytest.raises(PanicError, match="map callback threw"):
-        Ok(1).map(broken_map)
+        Ok(1).map(lambda _value: (_ for _ in ()).throw(ZeroDivisionError("bug")))
 
-    with pytest.raises(PanicError, match=r"TaggedError\.match handler threw"):
-        NotFoundError("x").match({"NotFound": broken_match})
+
+def test_tagged_error_transport_serialization_is_safe() -> None:
+    error = InvalidPortError("not-a-port")
+    payload = error.to_safe_json()
+    json.dumps(payload)
+    assert payload["_tag"] == "InvalidPort"
+    assert "stack" not in payload

@@ -76,47 +76,23 @@ def _require_err[T, E](value: Result[T, E]) -> Err[E]:
     return value
 
 
-def _finish[T, E](
-    value: T | SchemaFailure,
-    original: object,
-    make_error: Callable[[object, Sequence[CodecIssue]], E],
-) -> Result[T, E]:
-    if isinstance(value, SchemaFailure):
-        return Err(make_error(original, value.issues))
-    return Ok(value)
-
-
-def _run_sync[T, U, E](
-    schema: SyncSchema[T, U],
-    value: T,
-    original: object,
-    make_error: Callable[[object, Sequence[CodecIssue]], E],
-) -> Result[U, E]:
+def _run_sync[T, U](schema: SyncSchema[T, U], value: T) -> U | SchemaFailure:
     validated = schema(value)
-    if inspect.isawaitable(validated):
+    if isinstance(validated, Awaitable):
         # A sync codec should fail at the call site, and close a coroutine so
         # callers do not get a second "never awaited" warning.
         if inspect.iscoroutine(validated):
             validated.close()
         message = "sync codec schema returned an awaitable; use async_codec"
         raise TypeError(message)
-    return cast(
-        "Result[U, E]",
-        _finish(cast("U | SchemaFailure", validated), original, make_error),
-    )
+    return cast("U | SchemaFailure", validated)
 
 
-async def _run_async[T, U, E](
+async def _run_async[T, U](
     schema: AsyncSchema[T, U],
     value: T,
-    original: object,
-    make_error: Callable[[object, Sequence[CodecIssue]], E],
-) -> Result[U, E]:
-    validated = await schema(value)
-    return cast(
-        "Result[U, E]",
-        _finish(validated, original, make_error),
-    )
+) -> U | SchemaFailure:
+    return await schema(value)
 
 
 class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
@@ -140,32 +116,22 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         result: Result[OkInput, ErrInput],
     ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
         if isinstance(result, Ok):
-            encoded = _run_sync(
-                self._serialize_ok,
-                result.ok_value,
-                result.ok_value,
-                ResultSerializationError,
-            )
-            if isinstance(encoded, Err):
-                return Err(encoded.err_value)
+            encoded = _run_sync(self._serialize_ok, result.ok_value)
+            if isinstance(encoded, SchemaFailure):
+                return Err(ResultSerializationError(result.ok_value, encoded.issues))
             envelope: SerializedOk[OkWire] = {
                 "status": "ok",
-                "value": _require_ok(encoded).ok_value,
+                "value": encoded,
             }
             return Ok(envelope)
 
         result = _require_err(result)
-        encoded = _run_sync(
-            self._serialize_err,
-            result.err_value,
-            result.err_value,
-            ResultSerializationError,
-        )
-        if isinstance(encoded, Err):
-            return Err(encoded.err_value)
+        encoded = _run_sync(self._serialize_err, result.err_value)
+        if isinstance(encoded, SchemaFailure):
+            return Err(ResultSerializationError(result.err_value, encoded.issues))
         envelope: SerializedErr[ErrWire] = {
             "status": "error",
-            "error": _require_ok(encoded).ok_value,
+            "error": encoded,
         }
         return Ok(envelope)
 
@@ -178,31 +144,21 @@ class ResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             return Err(ResultDeserializationError(value))
 
         if envelope["status"] == "ok":
-            decoded = cast(
-                "Result[OkOutput, ResultDeserializationError]",
-                _run_sync(
-                    self._deserialize_ok,
-                    cast("OkWire", envelope.get("value")),
-                    value,
-                    ResultDeserializationError,
-                ),
+            decoded = _run_sync(
+                self._deserialize_ok,
+                cast("OkWire", envelope.get("value")),
             )
-            if isinstance(decoded, Err):
-                return Err(decoded.err_value)
-            return Ok(_require_ok(decoded).ok_value)
+            if isinstance(decoded, SchemaFailure):
+                return Err(ResultDeserializationError(value, decoded.issues))
+            return Ok(cast("OkOutput", decoded))
 
-        decoded = cast(
-            "Result[ErrOutput, ResultDeserializationError]",
-            _run_sync(
-                self._deserialize_err,
-                cast("ErrWire", envelope.get("error")),
-                value,
-                ResultDeserializationError,
-            ),
+        decoded = _run_sync(
+            self._deserialize_err,
+            cast("ErrWire", envelope.get("error")),
         )
-        if isinstance(decoded, Err):
-            return Err(decoded.err_value)
-        return Err(_require_ok(decoded).ok_value)
+        if isinstance(decoded, SchemaFailure):
+            return Err(ResultDeserializationError(value, decoded.issues))
+        return Err(cast("ErrOutput", decoded))
 
     def serialize_unsafe(
         self,
@@ -246,26 +202,16 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
         result: Result[OkInput, ErrInput],
     ) -> Result[SerializedResult[OkWire, ErrWire], ResultSerializationError]:
         if isinstance(result, Ok):
-            encoded = await _run_async(
-                self._serialize_ok,
-                result.ok_value,
-                result.ok_value,
-                ResultSerializationError,
-            )
-            if isinstance(encoded, Err):
-                return Err(encoded.err_value)
-            return Ok({"status": "ok", "value": _require_ok(encoded).ok_value})
+            encoded = await _run_async(self._serialize_ok, result.ok_value)
+            if isinstance(encoded, SchemaFailure):
+                return Err(ResultSerializationError(result.ok_value, encoded.issues))
+            return Ok({"status": "ok", "value": encoded})
 
         result = _require_err(result)
-        encoded = await _run_async(
-            self._serialize_err,
-            result.err_value,
-            result.err_value,
-            ResultSerializationError,
-        )
-        if isinstance(encoded, Err):
-            return Err(encoded.err_value)
-        return Ok({"status": "error", "error": _require_ok(encoded).ok_value})
+        encoded = await _run_async(self._serialize_err, result.err_value)
+        if isinstance(encoded, SchemaFailure):
+            return Err(ResultSerializationError(result.err_value, encoded.issues))
+        return Ok({"status": "error", "error": encoded})
 
     async def deserialize(
         self,
@@ -276,31 +222,21 @@ class AsyncResultCodec[OkInput, ErrInput, OkWire, ErrWire, OkOutput, ErrOutput]:
             return Err(ResultDeserializationError(value))
 
         if envelope["status"] == "ok":
-            decoded = cast(
-                "Result[OkOutput, ResultDeserializationError]",
-                await _run_async(
-                    self._deserialize_ok,
-                    cast("OkWire", envelope.get("value")),
-                    value,
-                    ResultDeserializationError,
-                ),
+            decoded = await _run_async(
+                self._deserialize_ok,
+                cast("OkWire", envelope.get("value")),
             )
-            if isinstance(decoded, Err):
-                return Err(decoded.err_value)
-            return Ok(_require_ok(decoded).ok_value)
+            if isinstance(decoded, SchemaFailure):
+                return Err(ResultDeserializationError(value, decoded.issues))
+            return Ok(cast("OkOutput", decoded))
 
-        decoded = cast(
-            "Result[ErrOutput, ResultDeserializationError]",
-            await _run_async(
-                self._deserialize_err,
-                cast("ErrWire", envelope.get("error")),
-                value,
-                ResultDeserializationError,
-            ),
+        decoded = await _run_async(
+            self._deserialize_err,
+            cast("ErrWire", envelope.get("error")),
         )
-        if isinstance(decoded, Err):
-            return Err(decoded.err_value)
-        return Err(_require_ok(decoded).ok_value)
+        if isinstance(decoded, SchemaFailure):
+            return Err(ResultDeserializationError(value, decoded.issues))
+        return Err(cast("ErrOutput", decoded))
 
     async def serialize_unsafe(
         self,

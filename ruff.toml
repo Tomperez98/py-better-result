@@ -3,6 +3,9 @@ target-version = "py312"
 [lint]
 select = ["ALL"]
 ignore = [
+  "ARG002",
+  "BLE001",
+  "C901",
   "COM812",
   "CPY001",
   "D101",
@@ -14,12 +17,10 @@ ignore = [
   "D212",
   "D401",
   "E501",
-  "PLR2004",
-  "S101",
-  "BLE001",
   "PLR0912",
   "PLR0915",
-  "C901",
+  "PLR2004",
+  "S101",
 ]
 
 [lint.isort]

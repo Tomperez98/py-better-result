@@ -17,7 +17,7 @@ from better_result import (
     async_codec,
     codec,
 )
-from tests.codec_helpers import (
+from better_result.testing import (
     assert_async_codec_roundtrip,
     assert_codec_roundtrip,
 )

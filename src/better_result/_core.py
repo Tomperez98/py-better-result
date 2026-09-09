@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import os
-from typing import TYPE_CHECKING, Never, TypeVar, override
+from typing import TYPE_CHECKING, Never, TypeIs, TypeVar, override
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -322,6 +322,16 @@ class Err[E](Result[Never, E]):
     @override
     def unwrap_or_default(self) -> None:
         return None
+
+
+def is_ok[T, E](result: Result[T, E]) -> TypeIs[Ok[T]]:
+    """Return whether ``result`` is an ``Ok`` and narrow its type."""
+    return isinstance(result, Ok)
+
+
+def is_err[T, E](result: Result[T, E]) -> TypeIs[Err[E]]:
+    """Return whether ``result`` is an ``Err`` and narrow its type."""
+    return isinstance(result, Err)
 
 
 def _require_result[T, E](value: Result[T, E]) -> Result[T, E]:

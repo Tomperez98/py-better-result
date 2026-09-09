@@ -7,7 +7,7 @@ from typing import Never, cast
 
 import pytest
 
-from better_result._core import Err, Ok, Result
+from better_result._core import Err, Ok, Result, is_err, is_ok
 
 
 def test_variants_have_symmetric_shape_and_value_access() -> None:
@@ -53,6 +53,16 @@ def test_variants_support_pattern_matching_and_are_immutable() -> None:
     assert Err.__hash__ is None
     with pytest.raises(TypeError):
         hash(success)
+
+
+def test_type_guards_identify_the_active_variant() -> None:
+    success: Result[int, str] = Ok(1)
+    failure: Result[int, str] = Err("bad")
+
+    assert is_ok(success)
+    assert not is_err(success)
+    assert is_err(failure)
+    assert not is_ok(failure)
 
 
 def test_result_operations_only_run_on_the_active_branch() -> None:

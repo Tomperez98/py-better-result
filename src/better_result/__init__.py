@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from better_result._core import Err, Ok, Result
+from better_result._core import Err, Ok, Result, is_err, is_ok
 from better_result._operations import (
     AlwaysRetry,
     ExponentialBackoff,
@@ -18,8 +18,12 @@ from better_result._operations import (
     RetryPredicate,
     RetrySchedule,
     StopRetry,
+    capture,
+    capture_async,
     retry,
     retry_async,
+    try_async,
+    try_result,
 )
 
 __all__ = [
@@ -40,7 +44,12 @@ __all__ = [
     "RetryPredicate",
     "RetrySchedule",
     "StopRetry",
-    "UnwrapError",
+    "capture",
+    "capture_async",
+    "is_err",
+    "is_ok",
     "retry",
     "retry_async",
+    "try_async",
+    "try_result",
 ]

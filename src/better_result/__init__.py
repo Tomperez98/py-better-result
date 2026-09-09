@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from better_result._core import Err, Ok, Result, UnwrapError
+from better_result._core import Err, Ok, Result
 from better_result._operations import (
     AlwaysRetry,
     ExponentialBackoff,

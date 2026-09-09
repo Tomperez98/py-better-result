@@ -66,7 +66,7 @@ def main() -> None:
         observed_attempts.append(context.attempt)
         return RetryAfter(0)
 
-    dynamic_policy = RetryPolicy.new(2, schedule)
+    dynamic_policy = RetryPolicy(2, schedule)
     dynamic_calls: list[int] = []
     dynamic_result = retry(lambda: fetch(dynamic_calls), dynamic_policy)
     assert dynamic_result == Ok("response from the service")

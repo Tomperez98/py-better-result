@@ -30,7 +30,9 @@ def test_result_method_types() -> None:
 def test_retry_constructor_and_operation_types() -> None:
     schedule = ExponentialBackoff(1, 2)
     policy = RetryPolicy.exponential(1, 1, 2)
+    direct_policy = RetryPolicy(1, schedule)
     assert_type(schedule, ExponentialBackoff)
     assert_type(policy, RetryPolicy[ExponentialBackoff, AlwaysRetry])
+    assert_type(direct_policy, RetryPolicy[ExponentialBackoff, AlwaysRetry])
     assert_type(retry(lambda: Ok(1), RetryPolicy.immediate(1)), Result[int, Never])
     assert_type(Err("bad"), Err[str])

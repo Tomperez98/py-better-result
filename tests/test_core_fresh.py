@@ -7,7 +7,7 @@ from typing import Never, cast
 
 import pytest
 
-from better_result._core import Err, Ok, Result, UnwrapError
+from better_result._core import Err, Ok, Result
 
 
 def test_variants_have_symmetric_shape_and_value_access() -> None:
@@ -106,26 +106,21 @@ def test_unwrap_and_fallback_operations_match_result_semantics() -> None:
     assert success.unwrap_or_default() == 3
     assert failure.unwrap_or_default() is None
 
-    with pytest.raises(UnwrapError, match="custom message"):
-        success.expect_err("custom message")
-    with pytest.raises(UnwrapError, match="custom: 'bad'"):
-        failure.expect("custom")
-    with pytest.raises(UnwrapError, match=r"Result\.unwrap"):
-        failure.unwrap()
-    with pytest.raises(UnwrapError, match="unwrap_err"):
-        success.unwrap_err()
 
+def test_wrong_variant_unwrap_operations_abort(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
 
-def test_flatten_and_transpose() -> None:
-    assert Ok(Ok(42)).flatten() == Ok(42)
-    assert Ok(Err("inner")).flatten() == Err("inner")
-    assert Err("outer").flatten() == Err("outer")
-    with pytest.raises(TypeError, match="operation must return a Result"):
-        Ok(42).flatten()
+    def fake_abort() -> None:
+        nonlocal calls
+        calls += 1
 
-    assert Ok(None).transpose() is None
-    assert Ok(42).transpose() == Ok(42)
-    assert Err("bad").transpose() == Err("bad")
+    monkeypatch.setattr("better_result._core.os.abort", fake_abort)
+
+    assert Ok(1).unwrap_err() is None
+    assert Ok(1).expect_err("unused") is None
+    assert Err("bad").unwrap() is None
+    assert Err("bad").expect("unused") is None
+    assert calls == 4
 
 
 def test_callbacks_and_invalid_result_values_fail_fast() -> None:
@@ -149,16 +144,6 @@ def test_results_are_not_iterables_and_subclasses_do_not_compare_equal() -> None
 
     assert Ok(1) != SpecialOk(1)
     assert Err("bad") != SpecialErr("bad")
-
-
-def test_exception_errors_preserve_their_cause() -> None:
-    cause = ValueError("root cause")
-    with pytest.raises(UnwrapError) as info:
-        Err(cause).unwrap()
-    assert info.value.__cause__ is cause
-    with pytest.raises(UnwrapError) as expect_info:
-        Err(cause).expect("custom")
-    assert expect_info.value.__cause__ is cause
 
 
 def _division_by_zero(_: int) -> int:

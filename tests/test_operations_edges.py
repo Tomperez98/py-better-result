@@ -74,13 +74,13 @@ def test_jitter_and_policy_dispatch_fail_fast_on_invalid_components() -> None:
         Jittered(object(), 0).decide(context)
 
     with pytest.raises(TypeError, match="schedule"):
-        RetryPolicy.new(1, object())._decide("error", 1)
+        RetryPolicy(1, object())._decide("error", 1)
 
     with pytest.raises(TypeError, match="RetryDecision"):
-        RetryPolicy.new(1, lambda _: object())._decide("error", 1)
+        RetryPolicy(1, lambda _: object())._decide("error", 1)
 
     with pytest.raises(TypeError, match="predicate"):
-        RetryPolicy.new(1, FixedBackoff(0)).with_predicate(object())._decide("error", 1)
+        RetryPolicy(1, FixedBackoff(0)).with_predicate(object())._decide("error", 1)
 
     assert isinstance(RetryPolicy.fixed(1, 1).with_jitter(0.5).schedule, Jittered)
     assert str(InvalidBackoffMultiplier()) == "backoff multiplier must be at least 1"

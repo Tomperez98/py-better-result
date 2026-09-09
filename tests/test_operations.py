@@ -70,7 +70,7 @@ def test_policy_predicate_and_custom_schedule() -> None:
         seen.append(context.attempt)
         return RetryAfter(0) if context.attempt < 2 else StopRetry()
 
-    custom = RetryPolicy.new(10, schedule)
+    custom = RetryPolicy(10, schedule)
     assert custom._decide("temporary", 1) == RetryAfter(0)
     assert custom._decide("temporary", 2) == StopRetry()
     assert seen == [1, 2]

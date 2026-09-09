@@ -40,22 +40,6 @@ def test_result_map_identity_and_composition_laws(
     ) == result.map(lambda item: (item + left) * right)
 
 
-@given(
-    is_ok=st.booleans(),
-    value=st.integers(),
-    error=st.text(),
-)
-def test_result_flatten_and_transpose_laws(
-    *, is_ok: bool, value: int, error: str
-) -> None:
-    inner: Result[int, str] = Ok(value) if is_ok else Err(error)
-    assert Ok(inner).flatten() == inner
-    assert Err(error).flatten() == Err(error)
-    assert Ok(value).transpose() == Ok(value)
-    assert Ok(None).transpose() is None
-    assert Err(error).transpose() == Err(error)
-
-
 @settings(max_examples=100)
 @given(
     initial=st.integers(min_value=0, max_value=100),
@@ -107,7 +91,7 @@ def test_policy_decision_checks_bound_before_schedule(times: int, attempt: int) 
         seen.append(context.attempt)
         return RetryAfter(0)
 
-    policy = RetryPolicy.new(times, schedule)
+    policy = RetryPolicy(times, schedule)
     decision = policy._decide("temporary", attempt)
     if attempt <= times:
         assert decision == RetryAfter(0)

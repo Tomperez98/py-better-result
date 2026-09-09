@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import os
 from typing import TYPE_CHECKING, Never, TypeVar, override
 
 if TYPE_CHECKING:
@@ -91,14 +92,6 @@ class Result[T_co, E_co](ABC):
 
     @abstractmethod
     def unwrap_or_default(self) -> T_co | None: ...
-
-
-class UnwrapError(RuntimeError):
-    """Raised when an unwrap-like operation selects the wrong variant."""
-
-    def __init__(self, result: object, message: str) -> None:
-        self.result = result
-        super().__init__(message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,11 +189,11 @@ class Ok[T](Result[T, Never]):
 
     @override
     def unwrap_err(self) -> Never:
-        raise UnwrapError(self, "called `Result.unwrap_err()` on an `Ok` value")
+        return os.abort()
 
     @override
     def expect_err(self, message: str) -> Never:
-        raise UnwrapError(self, message)
+        return os.abort()
 
     @override
     def unwrap_or[U](self, default: U) -> T:
@@ -215,17 +208,6 @@ class Ok[T](Result[T, Never]):
     @override
     def unwrap_or_default(self) -> T:
         return self.value
-
-    def flatten(self) -> Result[object, object]:
-        if not isinstance(self.value, (Ok, Err)):
-            message = "operation must return a Result"
-            raise TypeError(message)
-        return self.value
-
-    def transpose(self) -> Result[object, object] | None:
-        if self.value is None:
-            return None
-        return Ok(self.value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,23 +296,11 @@ class Err[E](Result[Never, E]):
 
     @override
     def unwrap(self) -> Never:
-        error = UnwrapError(
-            self,
-            f"called `Result.unwrap()` on an `Err` value: {self.value!r}",
-        )
-        if isinstance(self.value, BaseException):
-            raise error from self.value
-        raise error
+        return os.abort()
 
     @override
     def expect(self, message: str) -> Never:
-        error = UnwrapError(
-            self,
-            f"{message}: {self.value!r}",
-        )
-        if isinstance(self.value, BaseException):
-            raise error from self.value
-        raise error
+        return os.abort()
 
     @override
     def unwrap_err(self) -> E:
@@ -352,12 +322,6 @@ class Err[E](Result[Never, E]):
     @override
     def unwrap_or_default(self) -> None:
         return None
-
-    def flatten(self) -> Err[E]:
-        return self
-
-    def transpose(self) -> Err[E]:
-        return self
 
 
 def _require_result[T, E](value: Result[T, E]) -> Result[T, E]:

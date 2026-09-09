@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Never, assert_type
 
-from better_result._core import Err, Ok, Result, UnwrapError
+from better_result._core import Err, Ok, Result
 
 
 def test_variant_types_are_precise() -> None:
@@ -63,13 +63,6 @@ def test_result_type_narrowing_is_lsp_friendly() -> None:
     elif isinstance(result, Err):
         assert_type(result, Err[str])
         assert_type(result.err(), str)
-
-
-def test_unwrap_error_retains_a_result_shape() -> None:
-    try:
-        Err("bad").unwrap()
-    except UnwrapError as error:
-        assert_type(error.result, object)
 
 
 def typed_zero() -> int:

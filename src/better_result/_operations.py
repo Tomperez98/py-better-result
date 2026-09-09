@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import random
 import time
@@ -29,7 +29,7 @@ class RetryAfter:
     delay: float
 
     def __post_init__(self) -> None:
-        _validate_delay(self.delay)
+        _validate_delay(value=self.delay)
 
 
 type RetryDecision = RetryAfter | StopRetry
@@ -66,7 +66,7 @@ class RetryPredicate[E](Protocol):
 class AlwaysRetry:
     """The default predicate, which retries every error until the limit."""
 
-    def should_retry(self, context: RetryContext[object]) -> bool:
+    def should_retry[E](self, context: RetryContext[E]) -> bool:
         del context
         return True
 
@@ -78,7 +78,7 @@ class FixedBackoff:
     delay: float
 
     def __post_init__(self) -> None:
-        _validate_delay(self.delay)
+        _validate_delay(value=self.delay)
         object.__setattr__(self, "delay", float(self.delay))
 
     def decide(self, context: RetryContext[E]) -> RetryDecision:
@@ -93,7 +93,7 @@ class LinearBackoff:
     base_delay: float
 
     def __post_init__(self) -> None:
-        _validate_delay(self.base_delay)
+        _validate_delay(value=self.base_delay)
         object.__setattr__(self, "base_delay", float(self.base_delay))
 
     def decide(self, context: RetryContext[E]) -> RetryDecision:
@@ -118,7 +118,7 @@ class ExponentialBackoff:
     multiplier: int
 
     def __post_init__(self) -> None:
-        _validate_delay(self.base_delay)
+        _validate_delay(value=self.base_delay)
         if isinstance(self.multiplier, bool) or not isinstance(self.multiplier, int):
             raise InvalidBackoffMultiplier
         if self.multiplier < 1:
@@ -143,10 +143,10 @@ class InvalidJitterFactor(ValueError):  # noqa: N818
 
 
 @dataclass(frozen=True, slots=True)
-class Jittered:
+class Jittered[S]:
     """Apply multiplicative random jitter to another retry schedule."""
 
-    schedule: object
+    schedule: S
     factor: float
 
     def __post_init__(self) -> None:
@@ -167,19 +167,15 @@ class Jittered:
 
 
 @dataclass(frozen=True, slots=True)
-class RetryPolicy[S, P]:
+class RetryPolicy[S, P = AlwaysRetry]:
     """A bounded retry policy shared by sync and async operations."""
 
     max_retries: int
     schedule: S
-    predicate: P
+    predicate: P | AlwaysRetry = field(default_factory=AlwaysRetry)
 
     def __post_init__(self) -> None:
-        _validate_max_retries(self.max_retries)
-
-    @classmethod
-    def new(cls, max_retries: int, schedule: S) -> RetryPolicy[S, AlwaysRetry]:
-        return RetryPolicy(max_retries, schedule, AlwaysRetry())
+        _validate_max_retries(value=self.max_retries)
 
     @classmethod
     def immediate(cls, max_retries: int) -> RetryPolicy[FixedBackoff, AlwaysRetry]:
@@ -217,7 +213,7 @@ class RetryPolicy[S, P]:
     def with_predicate[Q](self, predicate: Q) -> RetryPolicy[S, Q]:
         return RetryPolicy(self.max_retries, self.schedule, predicate)
 
-    def with_jitter(self, factor: float) -> RetryPolicy[Jittered, P]:
+    def with_jitter(self, factor: float) -> RetryPolicy[Jittered[S], P]:
         return RetryPolicy(
             self.max_retries,
             Jittered(self.schedule, factor),
@@ -275,7 +271,7 @@ async def retry_async[T, E, S, P](
         attempt += 1
 
 
-def _schedule_decide[T](schedule: object, context: RetryContext[T]) -> RetryDecision:
+def _schedule_decide[T, S](schedule: S, context: RetryContext[T]) -> RetryDecision:
     decider = getattr(schedule, "decide", None)
     if callable(decider):
         decision = decider(context)
@@ -293,7 +289,7 @@ def _schedule_decide[T](schedule: object, context: RetryContext[T]) -> RetryDeci
             raise TypeError(message)
 
 
-def _predicate_should_retry[T](predicate: object, context: RetryContext[T]) -> bool:
+def _predicate_should_retry[T, P](predicate: P, context: RetryContext[T]) -> bool:
     retry_decider = getattr(predicate, "should_retry", None)
     if callable(retry_decider):
         return bool(retry_decider(context))
@@ -303,13 +299,13 @@ def _predicate_should_retry[T](predicate: object, context: RetryContext[T]) -> b
     raise TypeError(message)
 
 
-def _validate_max_retries(value: object) -> None:
+def _validate_max_retries(*, value: bool | int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         message = "max retries must be a non-negative integer"
         raise ValueError(message)
 
 
-def _validate_delay(value: object) -> None:
+def _validate_delay(*, value: bool | float) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         message = "retry delay must be a finite non-negative number"
         raise TypeError(message)

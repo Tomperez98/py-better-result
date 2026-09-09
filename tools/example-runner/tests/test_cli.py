@@ -17,7 +17,7 @@ from click.testing import CliRunner
 from better_result import Err, Ok
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
-EXPECTED_EXAMPLES = ("async-retry", "basic", "sync-retry")
+EXPECTED_EXAMPLES = ("async-retry", "basic", "capture", "sync-retry")
 
 
 def test_find_examples_dir_returns_a_result(tmp_path: Path) -> None:
@@ -63,6 +63,7 @@ def test_cli_runs_all_examples_in_sorted_order() -> None:
     assert header_positions == sorted(header_positions)
     assert "loaded from the service" in result.output
     assert "async response" in result.output
+    assert "mapped failure" in result.output
 
 
 def test_cli_reports_selection_and_usage_errors() -> None:

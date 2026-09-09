@@ -7,6 +7,7 @@ members = [
     "better-result-example",
     "example-async-retry",
     "example-basic",
+    "example-capture",
     "example-sync-retry",
     "py-better-result",
 ]
@@ -151,6 +152,17 @@ dependencies = [
 requires-dist = [{ name = "py-better-result", editable = "." }]
 
 [[package]]
+name = "example-capture"
+version = "0.1.0"
+source = { virtual = "examples/capture" }
+dependencies = [
+    { name = "py-better-result" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "py-better-result", editable = "." }]
+
+[[package]]
 name = "example-sync-retry"
 version = "0.1.0"
 source = { virtual = "examples/sync-retry" }
@@ -255,7 +267,7 @@ wheels = [
 
 [[package]]
 name = "py-better-result"
-version = "2.0.0"
+version = "2.0.1"
 source = { editable = "." }
 
 [package.dev-dependencies]

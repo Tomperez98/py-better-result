@@ -7,6 +7,7 @@ Run one example from the repository root:
 
 ```bash
 uv run better-result-example basic
+uv run better-result-example capture
 uv run better-result-example sync-retry
 uv run better-result-example async-retry
 ```
@@ -26,6 +27,8 @@ uv run better-result-example --all
 ## Examples
 
 - `basic`: the smallest synchronous retry workflow.
+- `capture`: convert synchronous and asynchronous exceptions into `Result`
+  values.
 - `sync-retry`: immediate, fixed, linear, exponential, predicate, and custom
   schedule retries.
 - `async-retry`: asynchronous retries and normal asyncio task cancellation.

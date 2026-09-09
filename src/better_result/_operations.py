@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import inspect
 import math
 import random
 import time
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar, cast, overload
 
 from better_result._core import Err, Ok, Result, _require_result
 
@@ -15,6 +16,18 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 E = TypeVar("E")
+type ExceptionTypes = type[Exception] | tuple[type[Exception], ...]
+
+
+def _validate_exception_types(*, value: ExceptionTypes) -> None:
+    exception_types = (value,) if isinstance(value, type) else value
+    if any(
+        not isinstance(exception_type, type)
+        or not issubclass(exception_type, Exception)
+        for exception_type in exception_types
+    ):
+        message = "exceptions must contain only Exception subclasses"
+        raise TypeError(message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +261,237 @@ def retry[T, E, S, P](
 
         time.sleep(decision.delay)
         attempt += 1
+
+
+@overload
+def capture[T, E: Exception](
+    operation: Callable[[], T],
+    *,
+    catch: None = None,
+    exceptions: type[E] | tuple[type[E], ...],
+) -> Result[T, E]: ...
+
+
+@overload
+def capture[T](
+    operation: Callable[[], T],
+    *,
+    catch: None = None,
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, Exception]: ...
+
+
+@overload
+def capture[T, E](
+    operation: Callable[[], T],
+    *,
+    catch: Callable[[Exception], E],
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, E]: ...
+
+
+def capture[T](
+    operation: Callable[[], T],
+    *,
+    catch: Callable[[Exception], object] | None = None,
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, object]:
+    """
+    Execute a synchronous operation and capture its exceptions as ``Err``.
+
+    ``catch`` maps the caught exception into the error vocabulary used by the
+    caller. If it is omitted, the original exception is the ``Err`` value.
+    By default every ``Exception`` is captured; pass ``exceptions`` to limit
+    the boundary to expected exception types. ``BaseException`` values still
+    propagate.
+    """
+    _validate_exception_types(value=exceptions)
+    try:
+        return cast("Result[T, object]", Ok(operation()))
+    except exceptions as cause:
+        cause = cast("Exception", cause)
+        error = cause if catch is None else catch(cause)
+        return cast("Result[T, object]", Err(error))
+
+
+@overload
+async def capture_async[T, E: Exception](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    catch: None = None,
+    exceptions: type[E] | tuple[type[E], ...],
+) -> Result[T, E]: ...
+
+
+@overload
+async def capture_async[T](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    catch: None = None,
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, Exception]: ...
+
+
+@overload
+async def capture_async[T, E](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    catch: Callable[[Exception], Awaitable[E]],
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, E]: ...
+
+
+@overload
+async def capture_async[T, E](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    catch: Callable[[Exception], E],
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, E]: ...
+
+
+async def capture_async[T](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    catch: Callable[[Exception], object | Awaitable[object]] | None = None,
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, object]:
+    """
+    Execute an async operation and capture its exceptions as ``Err``.
+
+    ``catch`` may be synchronous or asynchronous. As with :func:`capture`,
+    pass ``exceptions`` to limit which failures become ``Err`` values. Task
+    cancellation propagates normally.
+    """
+    _validate_exception_types(value=exceptions)
+    try:
+        return cast("Result[T, object]", Ok(await operation()))
+    except exceptions as cause:
+        cause = cast("Exception", cause)
+        if catch is None:
+            return cast("Result[T, object]", Err(cause))
+        error = catch(cause)
+        if inspect.isawaitable(error):
+            error = await error
+        return cast("Result[T, object]", Err(error))
+
+
+@overload
+def try_result[T, E: Exception, S, P](
+    operation: Callable[[], T],
+    policy: RetryPolicy[S, P] | None = None,
+    *,
+    catch: None = None,
+    exceptions: type[E] | tuple[type[E], ...],
+) -> Result[T, E]: ...
+
+
+@overload
+def try_result[T, S, P](
+    operation: Callable[[], T],
+    policy: RetryPolicy[S, P] | None = None,
+    *,
+    catch: None = None,
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, Exception]: ...
+
+
+@overload
+def try_result[T, E, S, P](
+    operation: Callable[[], T],
+    policy: RetryPolicy[S, P] | None = None,
+    *,
+    catch: Callable[[Exception], E],
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, E]: ...
+
+
+def try_result[T](
+    operation: Callable[[], T],
+    policy: RetryPolicy[object, object] | None = None,
+    *,
+    catch: Callable[[Exception], object] | None = None,
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, object]:
+    """Capture a synchronous operation and optionally retry its failures."""
+    result = capture(operation, catch=catch, exceptions=exceptions)
+    if policy is None:
+        return result
+
+    attempt = 1
+    while isinstance(result, Err):
+        decision = policy._decide(result.value, attempt)  # noqa: SLF001
+        if isinstance(decision, StopRetry):
+            return result
+        assert isinstance(decision, RetryAfter)
+        time.sleep(decision.delay)
+        attempt += 1
+        result = capture(operation, catch=catch, exceptions=exceptions)
+    assert isinstance(result, Ok)
+    return result
+
+
+@overload
+async def try_async[T, E: Exception, S, P](
+    operation: Callable[[], Awaitable[T]],
+    policy: RetryPolicy[S, P] | None = None,
+    *,
+    catch: None = None,
+    exceptions: type[E] | tuple[type[E], ...],
+) -> Result[T, E]: ...
+
+
+@overload
+async def try_async[T, S, P](
+    operation: Callable[[], Awaitable[T]],
+    policy: RetryPolicy[S, P] | None = None,
+    *,
+    catch: None = None,
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, Exception]: ...
+
+
+@overload
+async def try_async[T, E, S, P](
+    operation: Callable[[], Awaitable[T]],
+    policy: RetryPolicy[S, P] | None = None,
+    *,
+    catch: Callable[[Exception], E | Awaitable[E]],
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, E]: ...
+
+
+async def try_async[T](
+    operation: Callable[[], Awaitable[T]],
+    policy: RetryPolicy[object, object] | None = None,
+    *,
+    catch: Callable[[Exception], object | Awaitable[object]] | None = None,
+    exceptions: ExceptionTypes = Exception,
+) -> Result[T, object]:
+    """Capture an async operation and optionally retry its failures."""
+    result = await capture_async(
+        operation,
+        catch=catch,
+        exceptions=exceptions,
+    )
+    if policy is None:
+        return result
+
+    attempt = 1
+    while isinstance(result, Err):
+        decision = policy._decide(result.value, attempt)  # noqa: SLF001
+        if isinstance(decision, StopRetry):
+            return result
+        assert isinstance(decision, RetryAfter)
+        await asyncio.sleep(decision.delay)
+        attempt += 1
+        result = await capture_async(
+            operation,
+            catch=catch,
+            exceptions=exceptions,
+        )
+    assert isinstance(result, Ok)
+    return result
 
 
 async def retry_async[T, E, S, P](

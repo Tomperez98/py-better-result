@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import assert_never, assert_type
+from typing import Any, assert_never, assert_type
 
 from better_result import Err, Ok, Result
 
@@ -32,7 +32,7 @@ class EmailTaken:
 
 @dataclass(frozen=True, slots=True)
 class UserStoreUnavailable:
-    cause: object
+    cause: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +58,7 @@ class NoSuchUser:
 
 @dataclass(frozen=True, slots=True)
 class DatabaseUnavailable:
-    cause: object
+    cause: str
 
 
 type DriverError = NoSuchUser | DatabaseUnavailable
@@ -75,7 +75,7 @@ type FindUserError = UserNotFound | UserStoreUnavailable
 @dataclass(frozen=True, slots=True)
 class HttpResponse:
     status: int
-    body: object
+    body: dict[str, Any]
 
 
 def parse_create_user(value: object) -> Result[CreateUser, InvalidCreateUser]:

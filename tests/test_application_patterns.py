@@ -111,9 +111,13 @@ def publish_user_registered(user: User) -> Result[None, PublishFailed]:
 def register_user(value: object) -> Result[User, RegisterUserError]:
     """Compose a workflow while keeping every expected failure in its type."""
     return parse_create_user(value).and_then(
-        lambda command: ensure_email_available(command).and_then(
-            lambda _: insert_user(command).and_then(
-                lambda user: publish_user_registered(user).map(lambda _: user)
+        lambda command: ensure_email_available(
+            assert_type(command, CreateUser)
+        ).and_then(
+            lambda _: insert_user(assert_type(command, CreateUser)).and_then(
+                lambda user: publish_user_registered(assert_type(user, User)).map(
+                    lambda _: assert_type(user, User)
+                )
             )
         )
     )
@@ -149,12 +153,12 @@ def find_user(user_id: int) -> Result[User, FindUserError]:
 def to_http_response(result: Result[User, RegisterUserError]) -> HttpResponse:
     """Make the transport decision at one edge of the application."""
     if isinstance(result, Ok):
-        return HttpResponse(status=201, body={"id": result.ok_value.user_id})
+        return HttpResponse(status=201, body={"id": result.ok().user_id})
     if not isinstance(result, Err):
         message = "expected a concrete Result variant"
         raise TypeError(message)
 
-    error = result.err_value
+    error = result.err()
     match error:
         case InvalidCreateUser():
             return HttpResponse(status=400, body={"message": "invalid user"})

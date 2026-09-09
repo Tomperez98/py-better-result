@@ -7,7 +7,7 @@ import runpy
 
 import click
 
-from better_result import Err, Ok, Result, is_err
+from better_result import Err, Ok, Result
 
 
 def _find_examples_dir(working_directory: Path) -> Result[Path, str]:
@@ -63,8 +63,8 @@ def main(
 ) -> None:
     """Run one of the repository's runnable examples."""
     examples_result = _find_examples_dir(Path.cwd())
-    if is_err(examples_result):
-        raise click.ClickException(examples_result.err_value)
+    if examples_result.is_err():
+        raise click.ClickException(examples_result.unwrap_err())
     examples_dir = examples_result.unwrap()
 
     available = _discover_examples(examples_dir)
@@ -95,6 +95,6 @@ def main(
 
 def _run_example(examples_dir: Path, name: str) -> None:
     script_result = _resolve_example(examples_dir, name)
-    if is_err(script_result):
-        raise click.ClickException(script_result.err_value)
+    if script_result.is_err():
+        raise click.ClickException(script_result.unwrap_err())
     runpy.run_path(str(script_result.unwrap()), run_name="__main__")

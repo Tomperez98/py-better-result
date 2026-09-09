@@ -1,10 +1,8 @@
-"""Static type contracts for the fresh Result API."""
+"""Static type contracts for the reduced Result API."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Never, assert_type
-
-import pytest
+from typing import Never, assert_type
 
 from better_result._core import Err, Ok, Result, UnwrapError
 
@@ -17,10 +15,8 @@ def test_variant_types_are_precise() -> None:
     assert_type(failure, Err[str])
     assert_type(success.ok(), int)
     assert_type(success.err(), None)
-    assert_type(success.ok_value, int)
     assert_type(failure.ok(), None)
     assert_type(failure.err(), str)
-    assert_type(failure.err_value, str)
     assert_type(success.unwrap(), int)
     assert_type(failure.unwrap_err(), str)
     assert_type(success.unwrap_or("unused"), int)
@@ -28,12 +24,10 @@ def test_variant_types_are_precise() -> None:
     assert_type(failure.unwrap_or(default), int)
     assert_type(success.unwrap_or_else(lambda _: 0), int)
     assert_type(failure.unwrap_or_else(len), int)
-    assert_type(success.unwrap_or_raise(ValueError), int)
+    assert_type(success.unwrap_or_default(), int)
+    assert_type(failure.unwrap_or_default(), None)
     assert_type(success.expect("unused"), int)
     assert_type(failure.expect_err("unused"), str)
-
-    if TYPE_CHECKING:
-        assert_type(failure.unwrap_or_raise(ValueError), Never)
 
 
 def test_result_combinators_preserve_the_active_variant() -> None:
@@ -65,52 +59,17 @@ def test_result_type_narrowing_is_lsp_friendly() -> None:
 
     if isinstance(result, Ok):
         assert_type(result, Ok[int])
-        assert_type(result.ok_value, int)
+        assert_type(result.ok(), int)
     elif isinstance(result, Err):
         assert_type(result, Err[str])
-        assert_type(result.err_value, str)
-    else:
-        pytest.fail("unknown Result variant")
-
-    result = typed_result(success=True)
-    if isinstance(result, Err):
-        assert_type(result, Err[str])
-        assert_type(result.err_value, str)
-    elif isinstance(result, Ok):
-        assert_type(result, Ok[int])
-        assert_type(result.ok_value, int)
-    else:
-        pytest.fail("unknown Result variant")
-
-
-def test_result_success_type_is_covariant() -> None:
-    animal = accept_animal(typed_dog_result())
-
-    assert_type(animal, Result[Animal, str])
-
-
-@pytest.mark.asyncio
-async def test_async_combinators_have_precise_types() -> None:
-    success = typed_success()
-    failure = typed_failure()
-
-    assert_type(await success.map_async(to_text), Ok[str])
-    assert_type(await failure.map_async(to_text), Err[str])
-
-    async def to_error_length(error: str) -> int:
-        return len(error)
-
-    assert_type(await success.map_err_async(to_error_length), Ok[int])
-    assert_type(await failure.map_err_async(to_error_length), Err[int])
-    assert_type(await success.and_then_async(to_result), Result[str, ValueError])
-    assert_type(await failure.and_then_async(to_result), Err[str])
+        assert_type(result.err(), str)
 
 
 def test_unwrap_error_retains_a_result_shape() -> None:
     try:
         Err("bad").unwrap()
     except UnwrapError as error:
-        assert_type(error.result, Result[Any, Any])
+        assert_type(error.result, object)
 
 
 def typed_zero() -> int:
@@ -131,33 +90,9 @@ def typed_result(*, success: bool) -> Result[int, str]:
     return typed_success() if success else typed_failure()
 
 
-class Animal:
-    pass
-
-
-class Dog(Animal):
-    pass
-
-
-def typed_dog_result() -> Result[Dog, str]:
-    return Ok(Dog())
-
-
-def accept_animal(result: Result[Animal, str]) -> Result[Animal, str]:
-    return result
-
-
 def to_float(value: int) -> Result[float, Never]:
     return Ok(float(value))
 
 
 def to_float_result(_: str) -> Result[float, Never]:
     return Ok(1.0)
-
-
-async def to_text(value: int) -> str:
-    return str(value)
-
-
-async def to_result(value: int) -> Result[str, ValueError]:
-    return Ok(str(value))

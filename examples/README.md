@@ -1,35 +1,31 @@
 # Examples workspace
 
-Run a focused `py-better-result` example without installing anything globally.
-Each example is a small uv workspace member with its own dependency metadata,
-script, and README.
+These examples mirror the Rust workspace examples and exercise the public
+`py-better-result` API.
 
-## Set up the workspace
-
-From the repository root:
-
-```bash
-uv sync --all-packages
-```
-
-The root project remains the library package. Every example declares
-`py-better-result` as a workspace dependency, so `uv` runs the examples against
-the checked-out source rather than a separately downloaded release.
-
-Run one example by name:
+Run one example from the repository root:
 
 ```bash
 uv run better-result-example basic
+uv run better-result-example sync-retry
+uv run better-result-example async-retry
 ```
 
-List all runnable examples with:
+List examples:
 
 ```bash
 uv run better-result-example --list
 ```
 
-Run every example, as CI does, with:
+Run every example:
 
 ```bash
 uv run better-result-example --all
 ```
+
+## Examples
+
+- `basic`: the smallest synchronous retry workflow.
+- `sync-retry`: immediate, fixed, linear, exponential, predicate, and custom
+  schedule retries.
+- `async-retry`: asynchronous retries and normal asyncio task cancellation.

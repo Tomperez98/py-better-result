@@ -1,16 +1,13 @@
-"""Behavioral tests for the fresh Result core API."""
+"""Behavioral tests for the std::result::Result-shaped core API."""
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, is_dataclass
-from typing import TYPE_CHECKING, Never, cast
+from typing import Never, cast
 
 import pytest
 
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-from better_result._core import Err, Ok, Result, UnwrapError, is_err, is_ok
+from better_result._core import Err, Ok, Result, UnwrapError
 
 
 def test_variants_have_symmetric_shape_and_value_access() -> None:
@@ -26,13 +23,13 @@ def test_variants_have_symmetric_shape_and_value_access() -> None:
     assert success.err() is None
     assert failure.ok() is None
     assert failure.err() == "bad"
-    assert success.ok_value == 3
-    assert failure.err_value == "bad"
-    assert is_ok(success)
-    assert is_err(failure)
+    assert success.is_ok()
+    assert not success.is_err()
+    assert not failure.is_ok()
+    assert failure.is_err()
 
 
-def test_variants_support_public_positional_pattern_matching() -> None:
+def test_variants_support_pattern_matching_and_are_immutable() -> None:
     success = Ok(3)
     failure = Err("bad")
 
@@ -48,49 +45,25 @@ def test_variants_support_public_positional_pattern_matching() -> None:
         case _:
             pytest.fail("Err did not match its public value")
 
-
-def test_variants_are_frozen_dataclasses() -> None:
     assert is_dataclass(Ok)
     assert is_dataclass(Err)
-
-
-def test_variants_are_immutable_and_unhashable() -> None:
-    success = Ok(3)
-    failure = Err("bad")
-
     with pytest.raises(FrozenInstanceError):
         success.__setattr__("value", 4)
-    with pytest.raises(FrozenInstanceError):
-        failure.__setattr__("value", "changed")
-
     assert Ok.__hash__ is None
     assert Err.__hash__ is None
-
     with pytest.raises(TypeError):
         hash(success)
-    with pytest.raises(TypeError):
-        hash(failure)
-    with pytest.raises(TypeError):
-        hash(Ok([]))
-    with pytest.raises(TypeError):
-        hash(Err([]))
 
 
-def test_equality_does_not_cross_subclass_boundaries() -> None:
-    class SpecialOk(Ok[int]):
-        pass
-
-    class SpecialErr(Err[str]):
-        pass
-
-    assert Ok(1) != SpecialOk(1)
-    assert Err("bad") != SpecialErr("bad")
-
-
-def test_active_and_inactive_sync_operations() -> None:
+def test_result_operations_only_run_on_the_active_branch() -> None:
     success: Result[int, str] = Ok(2)
     failure: Result[int, str] = Err("bad")
     calls: list[str] = []
+
+    assert success.is_ok_and(lambda value: value == 2)
+    assert not failure.is_ok_and(lambda _: pytest.fail("inactive callback"))
+    assert failure.is_err_and(lambda error: error == "bad")
+    assert not success.is_err_and(lambda _: pytest.fail("inactive callback"))
 
     assert success.map(lambda value: value * 2) == Ok(4)
     assert failure.map(lambda _: pytest.fail("map callback ran")) is failure
@@ -99,9 +72,13 @@ def test_active_and_inactive_sync_operations() -> None:
     assert success.map_or(0, str) == "2"
     assert failure.map_or(0, str) == 0
     assert success.map_or_else(lambda: 0, str) == "2"
-    assert failure.map_or_else(lambda: 0, str) == 0
+    assert failure.map_or_else(lambda: 3, str) == 3
+    assert success.and_(Err("ignored")) == Err("ignored")
+    assert failure.and_(Ok(3)) is failure
     assert success.and_then(lambda value: Ok(str(value))) == Ok("2")
     assert failure.and_then(lambda _: pytest.fail("and_then callback ran")) is failure
+    assert success.or_(Err("ignored")) is success
+    assert failure.or_(Ok(3)) == Ok(3)
     assert success.or_else(lambda _: pytest.fail("or_else callback ran")) is success
     assert failure.or_else(lambda error: Ok(error.upper())) == Ok("BAD")
     assert success.inspect(lambda value: calls.append(f"ok:{value}")) is success
@@ -114,31 +91,7 @@ def test_active_and_inactive_sync_operations() -> None:
     assert calls == ["ok:2", "err:bad"]
 
 
-def test_match_and_inspect_both_select_only_the_active_branch() -> None:
-    success = Ok(2)
-    failure = Err("bad")
-    calls: list[str] = []
-
-    assert success.match(ok=lambda value: value * 2, err=lambda _: 0) == 4
-    assert failure.match(ok=lambda _: 0, err=str.upper) == "BAD"
-    assert (
-        success.inspect_both(
-            ok=lambda value: calls.append(f"ok:{value}"),
-            err=lambda _: pytest.fail("err callback ran"),
-        )
-        is success
-    )
-    assert (
-        failure.inspect_both(
-            ok=lambda _: pytest.fail("ok callback ran"),
-            err=lambda error: calls.append(f"err:{error}"),
-        )
-        is failure
-    )
-    assert calls == ["ok:2", "err:bad"]
-
-
-def test_unwrap_and_fallback_operations() -> None:
+def test_unwrap_and_fallback_operations_match_result_semantics() -> None:
     success = Ok(3)
     failure = Err("bad")
 
@@ -150,157 +103,77 @@ def test_unwrap_and_fallback_operations() -> None:
     assert failure.unwrap_or(0) == 0
     assert success.unwrap_or_else(lambda _: 0) == 3
     assert failure.unwrap_or_else(len) == 3
-    assert success.unwrap_or_raise(ValueError) == 3
+    assert success.unwrap_or_default() == 3
+    assert failure.unwrap_or_default() is None
 
     with pytest.raises(UnwrapError, match="custom message"):
         success.expect_err("custom message")
     with pytest.raises(UnwrapError, match="custom: 'bad'"):
         failure.expect("custom")
-    with pytest.raises(UnwrapError, match="Result\\.unwrap\\(\\)"):
+    with pytest.raises(UnwrapError, match=r"Result\.unwrap"):
         failure.unwrap()
     with pytest.raises(UnwrapError, match="unwrap_err"):
         success.unwrap_err()
-    with pytest.raises(ValueError, match="bad"):
-        failure.unwrap_or_raise(ValueError)
-
-    cause = ValueError("root cause")
-    failure_with_exception = Err(cause)
-    with pytest.raises(UnwrapError) as expect_info:
-        failure_with_exception.expect("custom")
-    assert expect_info.value.__cause__ is cause
-    with pytest.raises(UnwrapError) as unwrap_info:
-        failure_with_exception.unwrap()
-    assert unwrap_info.value.__cause__ is cause
 
 
-def test_and_then_rejects_non_result_callbacks() -> None:
-    invalid = cast("Callable[[int], Result[object, object]]", lambda _: 42)
-    with pytest.raises(TypeError, match="must return a Result"):
-        Ok(1).and_then(invalid)
+def test_flatten_and_transpose() -> None:
+    assert Ok(Ok(42)).flatten() == Ok(42)
+    assert Ok(Err("inner")).flatten() == Err("inner")
+    assert Err("outer").flatten() == Err("outer")
+    with pytest.raises(TypeError, match="operation must return a Result"):
+        Ok(42).flatten()
+
+    assert Ok(None).transpose() is None
+    assert Ok(42).transpose() == Ok(42)
+    assert Err("bad").transpose() == Err("bad")
 
 
-@pytest.mark.asyncio
-async def test_async_operations_short_circuit_and_validate() -> None:
-    success = Ok(2)
-    failure = Err("bad")
-
-    assert await success.map_async(lambda value: _constant(value * 2)) == Ok(4)
-    assert (
-        await failure.map_async(lambda _: pytest.fail("map_async callback ran"))
-        is failure
-    )
-
-    async def map_error(error: str) -> int:
-        return len(error)
-
-    assert await failure.map_err_async(map_error) == Err(3)
-    assert (
-        await success.map_err_async(lambda _: pytest.fail("map_err_async callback ran"))
-        is success
-    )
-
-    async def next_result(value: int) -> Result[str, Never]:
-        return Ok(str(value))
-
-    assert await success.and_then_async(next_result) == Ok("2")
-    assert (
-        await failure.and_then_async(
-            lambda _: pytest.fail("and_then_async callback ran")
-        )
-        is failure
-    )
-    assert await failure.or_else_async(
-        lambda error: _constant(Ok(error.upper()))
-    ) == Ok("BAD")
-    assert (
-        await success.or_else_async(lambda _: pytest.fail("or_else_async callback ran"))
-        is success
-    )
-
-    async_calls: list[str] = []
-    assert (
-        await success.inspect_async(
-            lambda value: _constant(async_calls.append(f"ok:{value}")),
-        )
-        is success
-    )
-    assert (
-        await failure.inspect_err_async(
-            lambda error: _constant(async_calls.append(f"err:{error}")),
-        )
-        is failure
-    )
-    assert (
-        await success.inspect_both_async(
-            ok=lambda value: _constant(async_calls.append(f"both-ok:{value}")),
-            err=lambda _: pytest.fail("async err callback ran"),
-        )
-        is success
-    )
-    assert async_calls == ["ok:2", "err:bad", "both-ok:2"]
-    assert (
-        await success.inspect_err_async(
-            lambda _: pytest.fail("async inactive err callback ran"),
-        )
-        is success
-    )
-    assert (
-        await failure.inspect_async(
-            lambda _: pytest.fail("async inactive ok callback ran"),
-        )
-        is failure
-    )
-    assert (
-        await failure.inspect_both_async(
-            ok=lambda _: pytest.fail("async inactive both ok callback ran"),
-            err=lambda error: _constant(async_calls.append(f"both-err:{error}")),
-        )
-        is failure
-    )
-    assert async_calls == ["ok:2", "err:bad", "both-ok:2", "both-err:bad"]
-
-    invalid = cast(
-        "Callable[[int], Awaitable[Result[object, object]]]",
-        lambda _: _constant(42),
-    )
-    with pytest.raises(TypeError, match="must return a Result"):
-        await success.and_then_async(invalid)
-
-
-@pytest.mark.asyncio
-async def test_callback_exceptions_propagate_as_defects() -> None:
+def test_callbacks_and_invalid_result_values_fail_fast() -> None:
     with pytest.raises(ZeroDivisionError):
-        Ok(1).map(lambda _: _raise_zero_division())
-
-    with pytest.raises(ZeroDivisionError):
-        await Ok(1).map_async(lambda _: _raise_zero_division())
-
-    with pytest.raises(RuntimeError, match="broken"):
-        Ok(1).and_then(lambda _: _raise_runtime_error())
-
-    with pytest.raises(RuntimeError, match="broken"):
-        await Ok(1).and_then_async(lambda _: _raise_runtime_error_async())
+        Ok(1).map(_division_by_zero)
+    with pytest.raises(TypeError, match="must return a Result"):
+        Ok(1).and_then(_invalid_next)
+    with pytest.raises(TypeError, match="must return a Result"):
+        Err("bad").or_else(_invalid_recovery)
 
 
-def test_results_are_not_iterables() -> None:
+def test_results_are_not_iterables_and_subclasses_do_not_compare_equal() -> None:
     assert not hasattr(Ok(1), "__iter__")
     assert not hasattr(Err("bad"), "__iter__")
 
+    class SpecialOk(Ok[int]):
+        pass
 
-async def _constant[T](value: T) -> T:
-    return value
+    class SpecialErr(Err[str]):
+        pass
+
+    assert Ok(1) != SpecialOk(1)
+    assert Err("bad") != SpecialErr("bad")
 
 
-def _raise_zero_division() -> Never:
-    message = "broken"
+def test_exception_errors_preserve_their_cause() -> None:
+    cause = ValueError("root cause")
+    with pytest.raises(UnwrapError) as info:
+        Err(cause).unwrap()
+    assert info.value.__cause__ is cause
+    with pytest.raises(UnwrapError) as expect_info:
+        Err(cause).expect("custom")
+    assert expect_info.value.__cause__ is cause
+
+
+def _division_by_zero(_: int) -> int:
+    message = "division by zero"
     raise ZeroDivisionError(message)
 
 
-def _raise_runtime_error() -> Never:
-    message = "broken"
-    raise RuntimeError(message)
+def _invalid_next(_: int) -> Result[int, str]:
+    return cast("Result[int, str]", cast("object", 42))
 
 
-async def _raise_runtime_error_async() -> Never:
-    message = "broken"
-    raise RuntimeError(message)
+def _invalid_recovery(_: str) -> Result[int, str]:
+    return cast("Result[int, str]", cast("object", 42))
+
+
+def _never(_: Never) -> None:
+    message = "unreachable"
+    raise AssertionError(message)

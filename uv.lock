@@ -5,20 +5,9 @@ requires-python = ">=3.13"
 [manifest]
 members = [
     "better-result-example",
-    "example-application-workflow",
-    "example-async-boundaries",
-    "example-async-traversal",
-    "example-async-workflows",
+    "example-async-retry",
     "example-basic",
-    "example-cancellation",
-    "example-codec",
-    "example-collections",
-    "example-cpu-heavy-cancellation",
-    "example-recovery",
-    "example-retry",
-    "example-thread-offload",
-    "example-validation",
-    "example-validation-collection",
+    "example-sync-retry",
     "py-better-result",
 ]
 
@@ -140,42 +129,9 @@ wheels = [
 ]
 
 [[package]]
-name = "example-application-workflow"
+name = "example-async-retry"
 version = "0.1.0"
-source = { virtual = "examples/application-workflow" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-async-boundaries"
-version = "0.1.0"
-source = { virtual = "examples/async-boundaries" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-async-traversal"
-version = "0.1.0"
-source = { virtual = "examples/async-traversal" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-async-workflows"
-version = "0.1.0"
-source = { virtual = "examples/async-workflows" }
+source = { virtual = "examples/async-retry" }
 dependencies = [
     { name = "py-better-result" },
 ]
@@ -195,97 +151,9 @@ dependencies = [
 requires-dist = [{ name = "py-better-result", editable = "." }]
 
 [[package]]
-name = "example-cancellation"
+name = "example-sync-retry"
 version = "0.1.0"
-source = { virtual = "examples/cancellation" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-codec"
-version = "0.1.0"
-source = { virtual = "examples/codec" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-collections"
-version = "0.1.0"
-source = { virtual = "examples/collections" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-cpu-heavy-cancellation"
-version = "0.1.0"
-source = { virtual = "examples/cpu-heavy-cancellation" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-recovery"
-version = "0.1.0"
-source = { virtual = "examples/recovery" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-retry"
-version = "0.1.0"
-source = { virtual = "examples/retry" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-thread-offload"
-version = "0.1.0"
-source = { virtual = "examples/thread-offload" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-validation"
-version = "0.1.0"
-source = { virtual = "examples/validation" }
-dependencies = [
-    { name = "py-better-result" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "py-better-result", editable = "." }]
-
-[[package]]
-name = "example-validation-collection"
-version = "0.1.0"
-source = { virtual = "examples/validation-collection" }
+source = { virtual = "examples/sync-retry" }
 dependencies = [
     { name = "py-better-result" },
 ]
@@ -387,7 +255,7 @@ wheels = [
 
 [[package]]
 name = "py-better-result"
-version = "1.0.5"
+version = "2.0.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

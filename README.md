@@ -1,318 +1,86 @@
 # py-better-result
 
-> Credits: [better-result.dev](https://better-result.dev)
-
-A typed `Result[T, E]` for Python: return `Ok(value)` or `Err(error)`, compose workflows without exception-driven control flow, and keep expected failures visible to the type checker.
+A small Python port of the Rust `retry-result` crate, with an immutable
+`Result[T, E]` implementation shaped after Rust's `std::result::Result`.
 
 ```python
-from dataclasses import dataclass
+from better_result import Err, Ok, RetryPolicy, retry
 
-from better_result import Err, Ok, Result
-
-
-@dataclass(frozen=True)
-class User:
-    name: str
+attempts = 0
 
 
-def parse_user_id(raw: str) -> Result[int, str]:
-    if not raw.isdecimal():
-        return Err("invalid user id")
-    return Ok(int(raw))
+def request() -> Ok[str] | Err[str]:
+    global attempts
+    attempts += 1
+    return Err("temporary") if attempts < 2 else Ok("done")
 
 
-def load_user(user_id: int) -> Result[User, str]:
-    if user_id == 42:
-        return Ok(User("Ada"))
-    return Err("user not found")
-
-
-result = parse_user_id("42").and_then(load_user).map(lambda user: user.name)
-
-match result:
-    case Ok(name):
-        print(name)
-    case Err(message):
-        print(f"error: {message}")
+result = retry(request, RetryPolicy.fixed(2, 0))
+assert result == Ok("done")
 ```
 
-```text
-Ada
+## Result
+
+`Ok(value)` and `Err(error)` are immutable result variants. The supported
+operations follow Rust's `Result` API:
+
+- inspection: `is_ok`, `is_err`, `is_ok_and`, `is_err_and`, `ok`, `err`
+- mapping: `map`, `map_or`, `map_or_else`, `map_err`
+- composition: `and_`, `and_then`, `or_`, `or_else`
+- observation: `inspect`, `inspect_err`
+- extraction: `unwrap`, `expect`, `unwrap_err`, `expect_err`, `unwrap_or`,
+  `unwrap_or_else`, `unwrap_or_default`
+- nesting: `flatten`, `transpose`
+
+Python uses `and_` and `or_` because `and` and `or` are reserved keywords.
+`unwrap`-style failures raise `UnwrapError`; callback exceptions are not
+silently converted to `Err` values.
+
+## Retry
+
+Retry operates on `Result`-returning operations. It does not catch Python
+exceptions; expected failures must be returned as `Err`, matching the Rust
+crate's behavior.
+
+```python
+from better_result import Err, Ok, RetryPolicy, retry
+
+policy = RetryPolicy.exponential(3, 0.01, 2)
+attempts = 0
+
+
+def operation() -> Ok[str] | Err[str]:
+    global attempts
+    attempts += 1
+    return Err("temporary") if attempts < 3 else Ok("response")
+
+
+result = retry(operation, policy)
+assert result == Ok("response")
 ```
 
-## Install
+Available schedules are `FixedBackoff`, `LinearBackoff`,
+`ExponentialBackoff`, and `Jittered`. Custom schedules implement
+`decide(RetryContext) -> RetryDecision`; custom predicates implement
+`should_retry(RetryContext) -> bool`.
 
-Using [uv](https://docs.astral.sh/uv/):
+Retry delays are finite, non-negative floating-point seconds, representing
+Rust's `Duration`. Invalid exponential multipliers and jitter factors raise
+`InvalidBackoffMultiplier` and `InvalidJitterFactor`, respectively.
 
-```bash
-uv add py-better-result
-```
-
-With pip:
-
-```bash
-pip install py-better-result
-```
-
-`py-better-result` requires Python 3.13 or newer.
+`retry_async` provides the same behavior for awaitable operations. Normal
+`asyncio` task cancellation cancels an in-flight operation or retry delay.
 
 ## Examples
 
-Runnable, focused examples for composition, validation, async workflows,
-cancellation, retries, collections, and codecs are in [`examples/`](examples/README.md).
-Start with
-[`examples/basic/`](examples/basic/README.md) for the smallest complete workflow:
+The examples mirror the Rust workspace:
 
 ```bash
 uv run better-result-example basic
+uv run better-result-example sync-retry
+uv run better-result-example async-retry
+uv run better-result-example --all
 ```
-
-List all runnable examples with `uv run better-result-example --list`, or run them all with `uv run better-result-example --all`.
-
-## Why use a Result?
-
-Use a `Result` when failure is an expected part of an operation—validation, a missing record, a rejected request, or a downstream service error. The error stays in the return type instead of being hidden in a broad `try`/`except` or collapsed into `None`.
-
-- `Ok[T]` contains a successful value.
-- `Err[E]` contains an expected error value.
-- `Result[T, E]` is the common type for either branch.
-- `and_then` and `map` short-circuit on the first `Err`.
-- Exceptions raised by callbacks are not silently converted into `Err`; unexpected defects propagate.
-- `Ok` and `Err` are frozen, unhashable dataclasses and support structural pattern matching.
-
-## Core API
-
-```python
-from better_result import Err, Ok, Result, is_err, is_ok
-
-result: Result[int, str] = Ok(2)
-
-result.map(lambda value: value * 10)  # Ok(20)
-result.and_then(lambda value: Ok(str(value)))  # Ok("2")
-result.map_err(str.upper)  # unchanged Ok(2)
-result.unwrap_or(0)  # 2
-result.match(ok=str, err=lambda error: error)  # "2"
-
-failure: Result[int, str] = Err("offline")
-failure.map(lambda value: value * 10)  # unchanged Err("offline")
-failure.map_err(str.upper)  # Err("OFFLINE")
-failure.unwrap_or(0)  # 0
-failure.unwrap_or_else(lambda error: len(error))  # 7
-```
-
-The branch-specific values are available as `ok_value` and `err_value`. Use `isinstance`, `is_ok`, or `is_err` to narrow a `Result`:
-
-```python
-if is_ok(result):
-    print(result.ok_value)  # int
-elif is_err(result):
-    print(result.err_value)  # str
-```
-
-### Choosing a combinator
-
-| Operation | Runs when | Returns |
-| --- | --- | --- |
-| `map(fn)` | the result is `Ok` | a new `Result` with the mapped success value |
-| `map_err(fn)` | the result is `Err` | a new `Result` with the mapped error |
-| `and_then(fn)` | the result is `Ok` | the `Result` returned by the next operation |
-| `or_else(fn)` | the result is `Err` | the `Result` returned by the recovery operation |
-| `map_or(default, fn)` | either branch | a plain value |
-| `map_or_else(default_fn, fn)` | either branch | a plain value |
-| `match(ok=..., err=...)` | exactly one branch | the handler's return value |
-| `inspect(fn)` / `inspect_err(fn)` | only the selected branch | the original `Result`, for side effects |
-
-`unwrap()` and `expect(message)` return the success value but raise `UnwrapError` on `Err`. Their counterparts `unwrap_err()` and `expect_err()` select the error branch. Prefer `unwrap_or`, `unwrap_or_else`, or explicit matching when failure is expected.
-`UnwrapError` inherits from `BaseException` intentionally: selecting the wrong
-branch is treated like a programmer-error/panic signal, not an expected domain
-failure, so it is not caught by `except Exception`.
-
-## Async workflows
-
-The core combinators have async forms: `map_async`, `map_err_async`, `and_then_async`, `or_else_async`, `inspect_async`, `inspect_err_async`, and `inspect_both_async`.
-
-```python
-import asyncio
-
-from better_result import Ok
-
-
-async def fetch_name(user_id: int) -> Ok[str]:
-    return Ok(f"user-{user_id}")
-
-
-async def main() -> None:
-    result = await Ok(2).and_then_async(fetch_name)
-    print(result)
-
-
-asyncio.run(main())
-```
-
-```text
-Ok(value='user-2')
-```
-
-Async callbacks are only awaited for the active branch. A failed `Result` therefore skips downstream success callbacks just like the synchronous API.
-
-## Capture exceptions and retry operations
-
-Use `capture` or `capture_async` for a one-shot exception boundary. They accept
-zero-argument operations, so simple parsing code does not need an unused
-`TryContext`:
-
-```python
-from better_result import Ok, capture
-
-result = capture(lambda: int("42"), catch=str)
-assert result == Ok(42)
-```
-
-Use `try_result` or `try_async` when the operation needs attempt context or a
-bounded retry policy. Without a mapper, the exception itself becomes the error
-value; `catch` can convert it into a domain error.
-
-```python
-from better_result import Err, TryContext, try_result
-
-
-def read_port(context: TryContext) -> int:
-    return int("not-a-port")
-
-
-result = try_result(read_port, catch=lambda exc: {"message": str(exc)})
-assert result == Err(
-    {"message": "invalid literal for int() with base 10: 'not-a-port'"}
-)
-```
-
-Both `try_result` and `try_async` accept the same bounded `RetryPolicy`. An integer remains shorthand for immediate retries. An integer retry count, or a policy without `should_retry`, retries every caught `Exception`; use a predicate that selects transient failures and retry only idempotent or otherwise safe-to-repeat operations. Prefer the named policy constructors when a delay schedule is needed:
-
-```python
-import asyncio
-
-from better_result import RetryPolicy, TryContext, try_async
-
-
-async def fetch(context: TryContext) -> str:
-    if context.attempt < 2:
-        raise TimeoutError("temporary timeout")
-    return "response body"
-
-
-async def main() -> None:
-    result = await try_async(
-        fetch,
-        catch=str,
-        retry=RetryPolicy[str].exponential(
-            times=3,  # retries after the first attempt
-            initial_delay=0,
-            should_retry=lambda context: "timeout" in context.error.lower(),
-        ),
-    )
-    print(result)
-
-
-asyncio.run(main())
-```
-
-`RetryPolicy.constant`, `.linear`, `.exponential`, and `.dynamic` use typed schedule values internally. When a callback does not provide enough information to infer the mapped error type, specialize the policy explicitly, as above. For direct composition, type the callback and compose the schedule explicitly:
-
-```python
-from better_result import DynamicDelay, RetryContext, RetryPolicy
-
-
-def delay_for_attempt(context: RetryContext[str]) -> float:
-    return context.attempt / 10
-
-
-dynamic_policy = RetryPolicy[str].from_schedule(
-    times=2,
-    schedule=DynamicDelay(delay_for_attempt),
-)
-```
-
-```text
-Ok(value='response body')
-```
-
-`TryContext.attempt` starts at `1`. A policy receives a separate `RetryContext` containing the mapped error, attempt number, and optional cancellation token. Retry schedules derive their zero-based retry position from `attempt`; custom delay and retry predicates receive the context as their only argument. `CancellationToken` is best-effort: `try_async` monitors it, cancels an in-flight operation task, checks it before and after attempts and policy decisions, and interrupts retry waits. Ordinary async operations do not need to check the token themselves. Cancellation raises `asyncio.CancelledError`; it is not returned as a domain `Err`.
-
-Delayed `try_result` retries use blocking `time.sleep()` and do not accept a cancellation token. Use `try_async` when retry waits must be interruptible.
-
-Cancellation still follows Python's async cancellation boundaries. CPU-bound code, blocking calls, or dependencies that suppress `CancelledError` may not stop immediately. Code that needs tighter responsiveness can optionally call `context.cancel_token.raise_if_cancelled()` while processing work. Native task cancellation is likewise propagated.
-
-## Collect, validate, or traverse Results
-
-```python
-from better_result import Err, Ok, all_results, collect_results, partition_results
-
-
-all_results([Ok(1), Ok(2)])
-# Ok(value=(1, 2))
-
-all_results([Ok(1), Err("database unavailable"), Ok(3)])
-# Err(value="database unavailable")
-
-collect_results([Ok(1), Err("bad input"), Err("also bad")])
-# Err(value=("bad input", "also bad"))
-
-partition_results([Ok(1), Err("bad input"), Ok(2)])
-# ([1, 2], ["bad input"])
-```
-
-- `all_results` returns every success in a tuple, or the first error in input order.
-- `collect_results` evaluates every supplied result and returns all errors in an ordered tuple; use it for independent validation.
-- `partition_results` returns `(success_values, error_values)` while preserving the relative order of each list.
-- `traverse(values, operation)` applies a synchronous Result-returning operation and uses `all_results` semantics.
-- `traverse_async(values, operation, max_concurrency=...)` applies an async operation concurrently while optionally bounding active work and preserving input order.
-- `flatten_result` turns `Result[Result[T, E], F]` into `Result[T, E | F]`.
-- `all_results_async`, `collect_results_async`, and `partition_results_async` accept `Result` values or awaitables, await them concurrently, and preserve input order.
-
-An `Err` returned by an async operation is a domain result, not an exception;
-async collection helpers do not silently cancel sibling operations because one
-operation returned an `Err`. Native task cancellation and exceptions still
-propagate.
-
-## Encode and decode at boundaries
-
-`codec` and `async_codec` turn a `Result` into a typed envelope suitable for JSON or another wire format. Each schema returns either the converted value or `SchemaFailure` with structured issues.
-
-```python
-from better_result import Err, Ok, codec
-
-
-result_codec = codec(
-    serialize_ok=lambda user: {"id": user["id"]},
-    serialize_err=lambda error: {"code": error},
-    deserialize_ok=lambda value: value["id"],
-    deserialize_err=lambda value: value["code"],
-)
-
-encoded = result_codec.serialize(Ok({"id": 42}))
-assert encoded == Ok({"status": "ok", "value": {"id": 42}})
-
-encoded_error = result_codec.serialize(Err("not_found"))
-assert encoded_error == Ok({"status": "error", "error": {"code": "not_found"}})
-
-decoded = result_codec.deserialize({"status": "ok", "value": {"id": 42}})
-assert decoded == Ok(42)
-```
-
-A decoded wire-level error is returned as `Err` with the decoded error value. Malformed envelopes and schema rejections are returned as `Err(ResultDeserializationError)`, so the deserialization error type is `ErrOutput | ResultDeserializationError`. Serialization schema rejections are returned as `Err(ResultSerializationError)`.
-
-Use `async_codec` when schemas are asynchronous. The `serialize_unsafe` and `deserialize_unsafe` methods unwrap codec failures and raise `UnwrapError`; they are useful only when the boundary failure is already handled elsewhere.
-
-## Public API
-
-The package exports:
-
-- Core types: `Result`, `Ok`, `Err`, `UnwrapError`, `is_ok`, `is_err`
-- Async and sync operations: `capture`, `capture_async`, `try_result`, `try_async`, `RetryPolicy`, `TryContext`, `RetryContext`, `CancellationToken`
-- Retry ADTs: `RetryAfter`, `StopRetry`, `ConstantDelay`, `LinearBackoff`, `ExponentialBackoff`, `DynamicDelay`, `Jittered`
-- Collection operations: `all_results`, `all_results_async`, `collect_results`, `collect_results_async`, `partition_results`, `partition_results_async`, `traverse`, `traverse_async`, `flatten_result`
-- Codecs: `codec`, `async_codec`, `ResultCodec`, `AsyncResultCodec`
-- Codec types: `SchemaFailure`, `CodecIssue`, `SerializedOk`, `SerializedErr`, `SerializedResult`, `SyncSchema`, `AsyncSchema`, `ResultSerializationError`, `ResultDeserializationError`
 
 ## Development
 
@@ -323,5 +91,3 @@ uv run pytest --cov
 uv run ruff check .
 uv run ty check
 ```
-
-The test suite includes example-based runtime tests, Hypothesis property-based tests, and static type contracts. Property tests exercise Result laws, collection reference models, retry bounds, backoff invariants, and cancellation behavior with automatically generated inputs.

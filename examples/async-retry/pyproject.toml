@@ -1,7 +1,7 @@
 [project]
-name = "example-async-traversal"
+name = "example-async-retry"
 version = "0.1.0"
-description = "Bounded async traversal example for py-better-result"
+description = "Asynchronous retry example for py-better-result"
 requires-python = ">=3.13"
 dependencies = ["py-better-result"]
 

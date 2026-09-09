@@ -16,6 +16,7 @@ members = [
     "example-cpu-heavy-cancellation",
     "example-recovery",
     "example-retry",
+    "example-thread-offload",
     "example-validation",
     "example-validation-collection",
     "py-better-result",
@@ -252,6 +253,17 @@ requires-dist = [{ name = "py-better-result", editable = "." }]
 name = "example-retry"
 version = "0.1.0"
 source = { virtual = "examples/retry" }
+dependencies = [
+    { name = "py-better-result" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "py-better-result", editable = "." }]
+
+[[package]]
+name = "example-thread-offload"
+version = "0.1.0"
+source = { virtual = "examples/thread-offload" }
 dependencies = [
     { name = "py-better-result" },
 ]
